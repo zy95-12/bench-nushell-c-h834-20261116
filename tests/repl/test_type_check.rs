@@ -178,3 +178,77 @@ fn in_oneof_block_expected_type(#[case] input: &str) -> TestResult {
 fn in_oneof_block_expected_block() -> TestResult {
     fail_test("match 1 { 0 => { try 3 } }", "expected block")
 }
+
+#[test]
+fn multi_output_custom_chain() -> TestResult {
+    run_test(
+        "def branch []: [int -> int, int -> string] { if true { 'ok' } else { $in } }; def text []: string -> string { $in | into string }; 1 | branch | text",
+        "ok",
+    )
+}
+
+#[test]
+fn multi_output_intersection_propagates() -> TestResult {
+    fail_test(
+        "def branch []: [int -> int, int -> string] { $in }; def narrow []: [string -> bool, float -> int] { $in }; def integer []: int -> int { $in }; 1 | branch | narrow | integer",
+        "command doesn't support bool input",
+    )
+}
+
+#[rstest]
+#[case("[int -> int, int -> string]", "int or string")]
+#[case("[int -> int, int -> string, int -> bool]", "int, string, or bool")]
+#[case("int -> int", "int")]
+fn multi_output_input_message(#[case] signature: &str, #[case] types: &str) -> TestResult {
+    fail_test(
+        &format!(
+            "def branch []: {signature} {{ $in }}; def date-only []: datetime -> datetime {{ $in }}; 1 | branch | date-only"
+        ),
+        &format!("command doesn't support {types} input"),
+    )
+}
+
+#[rstest]
+#[case("[int -> int, int -> string]", "int or string")]
+#[case("[int -> int, int -> string, int -> bool]", "int, string, or bool")]
+#[case("int -> int", "int")]
+fn multi_output_output_message(#[case] signature: &str, #[case] types: &str) -> TestResult {
+    fail_test(
+        &format!(
+            "def branch []: {signature} {{ $in }}; def wrong []: int -> datetime {{ branch }}"
+        ),
+        &format!("expected datetime, but command outputs {types}"),
+    )
+}
+
+#[test]
+fn multi_output_block_accepts_matching_alternative() -> TestResult {
+    run_test(
+        "def branch []: [int -> int, int -> string] { if true { 'ok' } else { $in } }; def text []: int -> string { branch }; 1 | text",
+        "ok",
+    )
+}
+
+#[test]
+fn multi_output_datetime_record_pipeline() -> TestResult {
+    run_test(
+        "{year: 2023, month: 1, day: 2} | into datetime | format date '%Y-%m-%d'",
+        "2023-01-02",
+    )
+}
+
+#[test]
+fn multi_output_unknown_input_stays_a_set() -> TestResult {
+    fail_test(
+        "def branch []: [int -> int, string -> string] { $in }; def date-only []: datetime -> datetime { $in }; def unknown [] { branch | date-only }",
+        "command doesn't support int or string input",
+    )
+}
+
+#[test]
+fn multi_output_deduplicates_types() -> TestResult {
+    fail_test(
+        "def branch []: [int -> string, int -> string] { $in }; def date-only []: datetime -> datetime { $in }; 1 | branch | date-only",
+        "command doesn't support string input",
+    )
+}

@@ -70,6 +70,18 @@ pub enum ParseError {
         #[label("expected {0}, but command outputs {1}")] Span,
     ),
 
+    #[error("Command does not support {0} input.")]
+    #[diagnostic(code(nu::parser::input_type_mismatch))]
+    InputMismatchMultiple(String, #[label("command doesn't support {0} input")] Span),
+
+    #[error("Command output doesn't match {0}.")]
+    #[diagnostic(code(nu::parser::output_type_mismatch))]
+    OutputMismatchMultiple(
+        Type,
+        String,
+        #[label("expected {0}, but command outputs {1}")] Span,
+    ),
+
     #[error("Type mismatch during operation.")]
     #[diagnostic(code(nu::parser::type_mismatch))]
     Mismatch(String, String, #[label("expected {0}, found {1}")] Span), // expected, found, span
@@ -619,8 +631,8 @@ impl ParseError {
             ParseError::MissingType(s) => *s,
             ParseError::TypeMismatch(_, _, s) => *s,
             ParseError::TypeMismatchHelp(_, _, s, _) => *s,
-            ParseError::InputMismatch(_, s) => *s,
-            ParseError::OutputMismatch(_, _, s) => *s,
+            ParseError::InputMismatch(_, s) | ParseError::InputMismatchMultiple(_, s) => *s,
+            ParseError::OutputMismatch(_, _, s) | ParseError::OutputMismatchMultiple(_, _, s) => *s,
             ParseError::MissingRequiredFlag(_, s) => *s,
             ParseError::IncompleteMathExpression(s) => *s,
             ParseError::UnknownState(_, s) => *s,
