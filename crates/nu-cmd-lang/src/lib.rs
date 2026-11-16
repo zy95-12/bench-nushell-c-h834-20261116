@@ -12,3 +12,6 @@ pub use default_context::*;
 pub use example_support::*;
 #[cfg(test)]
 pub use example_test::test_examples;
+
+mod namespace;
+pub use namespace::*;

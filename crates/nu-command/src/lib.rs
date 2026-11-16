@@ -75,3 +75,6 @@ mod database;
 
 #[cfg(feature = "sqlite")]
 pub use database::*;
+
+mod namespace;
+pub use namespace::*;
