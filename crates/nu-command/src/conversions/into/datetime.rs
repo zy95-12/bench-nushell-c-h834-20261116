@@ -82,6 +82,9 @@ impl Command for IntoDatetime {
             (Type::List(Box::new(Type::String)), Type::List(Box::new(Type::Date))),
             (Type::table(), Type::table()),
             (Type::Nothing, Type::table()),
+            // FIXME: https://github.com/nushell/nushell/issues/15485
+            // 'record -> any' was added as a temporary workaround to avoid type inference issues. The Any arm needs to be appear first.
+            (Type::record(), Type::Any),
             (Type::record(), Type::record()),
             (Type::record(), Type::Date),
             // FIXME Type::Any input added to disable pipeline input type checking, as run-time checks can raise undesirable type errors
