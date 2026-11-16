@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nu_protocol::{
     IntoSpanned, RegId, Span, Spanned,
-    ast::{Argument, Call, Expression, ExternalArgument},
+    ast::{Argument, Call, Expr, Expression, ExternalArgument},
     engine::StateWorkingSet,
     ir::{Instruction, IrAstRef, Literal},
 };
@@ -69,6 +69,19 @@ pub(crate) fn compile_call(
             }
             "return" => {
                 return compile_return(working_set, builder, call, redirect_modes, io_reg);
+            }
+            "export-env" => {
+                if let Some(Expression {
+                    expr: Expr::Block(id),
+                    ..
+                }) = call.positional_nth(0)
+                {
+                    let block = working_set.get_block(*id);
+                    if block.ir_block.is_none() {
+                        // This block runs independently, without the caller's loop targets.
+                        super::compile(working_set, block)?;
+                    }
+                }
             }
             "def" | "export def" => {
                 return builder.load_empty(io_reg);

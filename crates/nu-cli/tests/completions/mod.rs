@@ -2137,7 +2137,8 @@ fn run_external_completion_within_pwd(
     assert!(engine_state.merge_delta(delta).is_ok());
 
     assert!(
-        eval_block::<WithoutDebug>(&engine_state, &mut stack, &block, PipelineData::Empty).is_ok()
+        eval_block::<WithoutDebug>(&engine_state, &mut stack, &block, PipelineData::empty())
+            .is_ok()
     );
 
     // Merge environment into the permanent state
@@ -2483,7 +2484,7 @@ fn operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("'str' +", 7);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2548,7 +2549,7 @@ fn cell_path_operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("const f = {'foo': [1, '1']}; $f.foo.1 ++", 40);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2561,7 +2562,7 @@ fn assignment_operator_completions(mut custom_completer: NuCompleter) {
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
     // = ++=
-    assert_eq!(19, suggestions.len());
+    assert_eq!(21, suggestions.len());
     let suggestions = custom_completer.complete("mut foo = ''; $foo ++", 21);
     let expected: Vec<_> = vec!["++", "++="];
     match_suggestions(&expected, &suggestions);
@@ -2608,7 +2609,7 @@ fn assignment_operator_completions(mut custom_completer: NuCompleter) {
 
     // all operators for type any
     let suggestions = custom_completer.complete("ls | where name ", 16);
-    assert_eq!(30, suggestions.len());
+    assert_eq!(32, suggestions.len());
     let expected: Vec<_> = vec!["starts-with"];
     let suggestions = custom_completer.complete("ls | where name starts", 22);
     match_suggestions(&expected, &suggestions);
@@ -2627,7 +2628,7 @@ fn cellpath_assignment_operator_completions() {
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
     // = ++=
-    assert_eq!(19, suggestions.len());
+    assert_eq!(21, suggestions.len());
     let completion_str = "$foo.foo.1 ++";
     let suggestions = completer.complete(completion_str, completion_str.len());
     let expected: Vec<_> = vec!["++", "++="];
@@ -2657,7 +2658,7 @@ fn type_inferenced_operator_completions(mut custom_completer: NuCompleter) {
     // == != > < >= <= in not-in
     // has not-has starts-with ends-with
     // =~ !~ like not-like ++
-    assert_eq!(17, suggestions.len());
+    assert_eq!(19, suggestions.len());
     let suggestions = custom_completer.complete("const f = {'foo': [1, '1']}; $f.foo.1 ++", 38);
     let expected: Vec<_> = vec!["++"];
     match_suggestions(&expected, &suggestions);
@@ -2669,4 +2670,88 @@ fn type_inferenced_operator_completions(mut custom_completer: NuCompleter) {
     let suggestions = custom_completer.complete("mut foo = [(date now)]; $foo.0 =", 32);
     let expected: Vec<_> = vec!["=", "=="];
     match_suggestions(&expected, &suggestions);
+}
+
+#[test]
+fn foundation_local_bindings_cli_and_lsp() {
+    let (_, _, engine, stack) = new_engine();
+    let completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+    for (line, expected) in [
+        ("def test [foo] { $fo", "$foo"),
+        ("def test [foo?] { $fo", "$foo"),
+        ("def test [...foo] { $fo", "$foo"),
+        ("def test [--foo: string] { $fo", "$foo"),
+        ("for foo in [1] { $fo", "$foo"),
+        ("if true { let foo = 1; $fo", "$foo"),
+        ("match [1] { [$foo] => { $fo", "$foo"),
+    ] {
+        let cli = completer.fetch_completions_at(line, line.len());
+        assert!(
+            cli.iter().any(|s| s.suggestion.value == expected),
+            "CLI: {line}: {cli:?}"
+        );
+        let lsp = completer.fetch_completions_within_file("local.nu", line.len(), line);
+        assert!(
+            lsp.iter().any(|s| s.suggestion.value == expected),
+            "LSP: {line}: {lsp:?}"
+        );
+    }
+    let builtins = completer.fetch_completions_at("$", 1);
+    for name in ["$nu", "$in", "$env"] {
+        let suggestion = builtins
+            .iter()
+            .find(|s| s.suggestion.value == name)
+            .unwrap();
+        assert_eq!(suggestion.suggestion.description.as_deref(), Some("any"));
+    }
+    for line in [
+        "if true { let foo = 1 }; $fo",
+        "for foo in [1] {}; $fo",
+        "def test [foo] {}; $fo",
+        "match [1] { [$foo] => {} }; $fo",
+        "if true { let foo = 1 }; if true { $fo",
+    ] {
+        for suggestions in [
+            completer.fetch_completions_at(line, line.len()),
+            completer.fetch_completions_within_file("local.nu", line.len(), line),
+        ] {
+            assert!(
+                !suggestions.iter().any(|s| s.suggestion.value == "$foo"),
+                "{line}: {suggestions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn foundation_string_operator_completion() {
+    let (_, _, engine, stack) = new_engine();
+    let completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+    let line = "'hello' ";
+    let suggestions = completer.fetch_completions_at(line, line.len());
+    for operator in ["not-starts-with", "not-ends-with"] {
+        assert!(suggestions.iter().any(|s| s.suggestion.value == operator));
+    }
+}
+
+#[test]
+fn foundation_commandline_accept_modes() {
+    for (source, expected) in [
+        ("commandline edit --accept 'echo replace'", "echo replace"),
+        (
+            "commandline edit 'echo '; commandline edit -A --append append",
+            "echo append",
+        ),
+        (
+            "commandline edit 'echo '; commandline edit -A --insert insert",
+            "echo insert",
+        ),
+    ] {
+        let (_, _, engine, mut stack) = new_engine();
+        let mut engine = nu_cli::add_cli_context(engine);
+        support::merge_input(source.as_bytes(), &mut engine, &mut stack).unwrap();
+        let state = engine.repl_state.lock().unwrap();
+        assert!(state.accept);
+        assert_eq!(state.buffer, expected);
+    }
 }

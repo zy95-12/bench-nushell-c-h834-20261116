@@ -43,6 +43,7 @@ pub enum VirtualPath {
 }
 
 pub struct ReplState {
+    pub accept: bool,
     pub buffer: String,
     // A byte position, as `EditCommand::MoveToPosition` is also a byte position
     pub cursor_pos: usize,
@@ -183,6 +184,7 @@ impl EngineState {
             config: Arc::new(Config::default()),
             pipeline_externals_state: Arc::new((AtomicU32::new(0), AtomicU32::new(0))),
             repl_state: Arc::new(Mutex::new(ReplState {
+                accept: false,
                 buffer: "".to_string(),
                 cursor_pos: 0,
             })),
@@ -1076,6 +1078,7 @@ impl EngineState {
     pub fn recover_from_panic(&mut self) {
         if Mutex::is_poisoned(&self.repl_state) {
             self.repl_state = Arc::new(Mutex::new(ReplState {
+                accept: false,
                 buffer: "".to_string(),
                 cursor_pos: 0,
             }));

@@ -117,6 +117,112 @@ fn strip_placeholder_with_rsplit<'a>(
     (Span::new(start, end), prefix)
 }
 
+/// Recover bindings from the AST because parser scopes have been popped by the time
+/// completion runs. Only descend into scopes containing the cursor.
+fn completion_bindings(
+    block: &Block,
+    working_set: &StateWorkingSet,
+    cursor: usize,
+) -> Vec<(Vec<u8>, nu_protocol::VarId)> {
+    use std::cell::RefCell;
+    let ids = RefCell::new(Vec::new());
+    block.find_map::<(), _>(working_set, &|expr| {
+        if expr.span.start > cursor {
+            return FindMapResult::Stop;
+        }
+        match &expr.expr {
+            Expr::Block(id)
+            | Expr::Closure(id)
+            | Expr::Subexpression(id)
+            | Expr::RowCondition(id) => {
+                if expr.span.contains(cursor) {
+                    let nested = working_set.get_block(*id);
+                    let signature = &nested.signature;
+                    ids.borrow_mut().extend(
+                        signature
+                            .required_positional
+                            .iter()
+                            .chain(&signature.optional_positional)
+                            .chain(signature.rest_positional.iter())
+                            .filter_map(|arg| arg.var_id),
+                    );
+                    ids.borrow_mut()
+                        .extend(signature.named.iter().filter_map(|arg| arg.var_id));
+                    ids.borrow_mut().extend(
+                        completion_bindings(nested, working_set, cursor)
+                            .into_iter()
+                            .map(|(_, id)| id),
+                    );
+                }
+                return FindMapResult::Stop;
+            }
+            Expr::Call(call) => {
+                let name = working_set.get_decl(call.decl_id).name();
+                if !expr.span.contains(cursor) && !matches!(name, "let" | "mut" | "const") {
+                    return FindMapResult::Stop;
+                }
+            }
+            Expr::VarDecl(id) => ids.borrow_mut().push(*id),
+            Expr::Signature(signature) if expr.span.start <= cursor => {
+                ids.borrow_mut().extend(
+                    signature
+                        .required_positional
+                        .iter()
+                        .chain(&signature.optional_positional)
+                        .chain(signature.rest_positional.iter())
+                        .filter_map(|arg| arg.var_id),
+                );
+                ids.borrow_mut()
+                    .extend(signature.named.iter().filter_map(|arg| arg.var_id));
+            }
+            Expr::MatchBlock(arms) => {
+                for (pattern, body) in arms {
+                    if body.span.contains(cursor) {
+                        ids.borrow_mut().extend(pattern.variables());
+                        body.find_map::<(), _>(working_set, &|inner| {
+                            if let Expr::Block(id) = inner.expr {
+                                ids.borrow_mut().extend(
+                                    completion_bindings(
+                                        working_set.get_block(id),
+                                        working_set,
+                                        cursor,
+                                    )
+                                    .into_iter()
+                                    .map(|(_, id)| id),
+                                );
+                            }
+                            FindMapResult::Stop
+                        });
+                    }
+                }
+                return FindMapResult::Stop;
+            }
+            _ => {}
+        }
+        FindMapResult::Continue
+    });
+    ids.into_inner()
+        .into_iter()
+        .filter_map(|id| {
+            let span = working_set.get_variable(id).declaration_span;
+            if span.start > cursor || span.is_empty() {
+                return None;
+            }
+            let name = working_set.get_span_contents(span);
+            let name = String::from_utf8_lossy(name);
+            let name = name
+                .trim_start_matches("...")
+                .trim_start_matches("--")
+                .trim_end_matches('?');
+            let mut name = name.as_bytes().to_vec();
+            if !name.starts_with(b"$") {
+                name.insert(0, b'$');
+            }
+            Some((name, id))
+        })
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct NuCompleter {
     engine_state: Arc<EngineState>,
@@ -179,6 +285,8 @@ impl NuCompleter {
             format!("{line}a").as_bytes(),
             false,
         );
+        let bindings = completion_bindings(&block, &working_set, offset + pos);
+        working_set.use_variables(bindings);
         self.fetch_completions_by_block(block, &working_set, pos, offset, line, true)
     }
 
@@ -200,6 +308,8 @@ impl NuCompleter {
             return vec![];
         };
         let offset = file_span.start;
+        let bindings = completion_bindings(&block, &working_set, offset + pos.saturating_sub(1));
+        working_set.use_variables(bindings);
         self.fetch_completions_by_block(block.clone(), &working_set, pos, offset, contents, false)
     }
 

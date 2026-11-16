@@ -51,6 +51,20 @@ pub fn grapheme_flags(
             span: call.head,
         })?
     }
+    if g_flag && call.has_flag(engine_state, stack, "chars")? {
+        return Err(ShellError::IncompatibleParametersSingle {
+            msg: "Incompatible flags: --grapheme-clusters (-g) and --chars (-c)".into(),
+            span: call.head,
+        });
+    }
+    if call.has_flag(engine_state, stack, "chars")?
+        && call.has_flag(engine_state, stack, "utf-8-bytes")?
+    {
+        return Err(ShellError::IncompatibleParametersSingle {
+            msg: "Incompatible flags: --chars (-c) and --utf-8-bytes (-b)".into(),
+            span: call.head,
+        });
+    }
     // Grapheme cluster usage is decided by the non-default -g flag
     Ok(g_flag)
 }
@@ -72,6 +86,20 @@ pub fn grapheme_flags_const(
             msg: "Incompatible flags: --grapheme-clusters (-g) and --utf-8-bytes (-b)".to_string(),
             span: call.head,
         })?
+    }
+    if g_flag && call.has_flag_const(working_set, "chars")? {
+        return Err(ShellError::IncompatibleParametersSingle {
+            msg: "Incompatible flags: --grapheme-clusters (-g) and --chars (-c)".into(),
+            span: call.head,
+        });
+    }
+    if call.has_flag_const(working_set, "chars")?
+        && call.has_flag_const(working_set, "utf-8-bytes")?
+    {
+        return Err(ShellError::IncompatibleParametersSingle {
+            msg: "Incompatible flags: --chars (-c) and --utf-8-bytes (-b)".into(),
+            span: call.head,
+        });
     }
     Ok(g_flag)
 }

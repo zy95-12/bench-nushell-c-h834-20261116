@@ -104,18 +104,30 @@ impl Command for Open {
             let arg_span = path.span;
             // let path_no_whitespace = &path.item.trim_end_matches(|x| matches!(x, '\x09'..='\x0d'));
 
-            for path in
-                nu_engine::glob_from(&path, &cwd, call_span, None, engine_state.signals().clone())
-                    .map_err(|err| match err {
-                        ShellError::Io(mut err) => {
-                            err.kind = err.kind.not_found_as(NotFound::File);
-                            err.span = arg_span;
-                            err.into()
-                        }
-                        _ => err,
-                    })?
-                    .1
-            {
+            let paths: Box<dyn Iterator<Item = Result<PathBuf, ShellError>>> =
+                if nu_path::is_windows_device_path(path.item.as_ref()) {
+                    Box::new(std::iter::once(Ok(PathBuf::from(path.item.as_ref()))))
+                } else {
+                    Box::new(
+                        nu_engine::glob_from(
+                            &path,
+                            &cwd,
+                            call_span,
+                            None,
+                            engine_state.signals().clone(),
+                        )
+                        .map_err(|err| match err {
+                            ShellError::Io(mut err) => {
+                                err.kind = err.kind.not_found_as(NotFound::File);
+                                err.span = arg_span;
+                                err.into()
+                            }
+                            _ => err,
+                        })?
+                        .1,
+                    )
+                };
+            for path in paths {
                 let path = path?;
                 let path = Path::new(&path);
 
@@ -176,12 +188,12 @@ impl Command for Open {
                         .map_err(|err| IoError::new(err, arg_span, PathBuf::from(path)))?;
 
                     // No content_type by default - Is added later if no converter is found
-                    let stream = PipelineData::ByteStream(
+                    let stream = PipelineData::byte_stream(
                         ByteStream::file(file, call_span, engine_state.signals().clone()),
-                        Some(PipelineMetadata {
+                        PipelineMetadata {
                             data_source: DataSource::FilePath(path.to_path_buf()),
                             content_type: None,
-                        }),
+                        },
                     );
 
                     let exts_opt: Option<Vec<String>> = if raw {
@@ -246,7 +258,7 @@ impl Command for Open {
         }
 
         if output.is_empty() {
-            Ok(PipelineData::Empty)
+            Ok(PipelineData::empty())
         } else if output.len() == 1 {
             Ok(output.remove(0))
         } else {

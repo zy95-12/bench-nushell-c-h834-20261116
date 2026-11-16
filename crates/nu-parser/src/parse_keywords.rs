@@ -1914,6 +1914,14 @@ pub fn parse_export_env(
         return (garbage_pipeline(working_set, spans), None);
     };
 
+    // Exported environment blocks execute independently rather than being inlined
+    // into the importing block's IR builder.
+    if working_set.parse_errors.is_empty() && working_set.get_block(block_id).ir_block.is_none() {
+        let mut block = working_set.get_block(block_id).as_ref().clone();
+        compile_block(working_set, &mut block);
+        *working_set.get_block_mut(block_id) = block;
+    }
+
     let pipeline = Pipeline::from_vec(vec![Expression::new(
         working_set,
         Expr::Call(call),
@@ -4099,6 +4107,10 @@ pub fn find_in_dirs(
     cwd: &str,
     dirs_var_name: Option<&str>,
 ) -> Option<ParserPath> {
+    if nu_path::is_windows_device_path(filename) {
+        return Some(ParserPath::RealPath(Path::new(filename).to_path_buf()));
+    }
+
     pub fn find_in_dirs_with_id(
         filename: &str,
         working_set: &StateWorkingSet,

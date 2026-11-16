@@ -3801,6 +3801,13 @@ pub fn parse_row_condition(working_set: &mut StateWorkingSet, spans: &[Span]) ->
             return expression;
         }
         _ => {
+            if !type_compatible(&Type::Bool, &expression.ty) {
+                working_set.error(ParseError::TypeMismatch(
+                    Type::Bool,
+                    expression.ty.clone(),
+                    expression.span,
+                ));
+            }
             // We have an expression, so let's convert this into a block.
             let mut block = Block::new();
             let mut pipeline = Pipeline::new();
@@ -4816,7 +4823,26 @@ pub fn parse_block_expression(working_set: &mut StateWorkingSet, span: Span) -> 
         _ => (None, 0),
     };
 
-    let mut output = parse_block(working_set, &output[amt_to_skip..], span, false, false);
+    // Keyword bodies are compiled in the enclosing IR builder, which carries loop targets.
+    let mut output = parse_block_inner(
+        working_set,
+        &output[amt_to_skip..],
+        span,
+        false,
+        false,
+        false,
+    );
+
+    // Keep an independent IR representation for consumers such as export-env.
+    // A loop-control error can only be judged once the enclosing keyword is
+    // compiled with its loop targets; that compilation will report invalid uses.
+    if working_set.parse_errors.is_empty() {
+        match nu_engine::compile(working_set, &output) {
+            Ok(ir) => output.ir_block = Some(ir),
+            Err(nu_protocol::CompileError::NotInALoop { .. }) => {}
+            Err(error) => working_set.compile_errors.push(error),
+        }
+    }
 
     if let Some(signature) = signature {
         output.signature = signature.0;
@@ -5497,7 +5523,9 @@ pub fn parse_operator(working_set: &mut StateWorkingSet, span: Span) -> Expressi
         b"has" => Operator::Comparison(Comparison::Has),
         b"not-has" => Operator::Comparison(Comparison::NotHas),
         b"starts-with" => Operator::Comparison(Comparison::StartsWith),
+        b"not-starts-with" => Operator::Comparison(Comparison::NotStartsWith),
         b"ends-with" => Operator::Comparison(Comparison::EndsWith),
+        b"not-ends-with" => Operator::Comparison(Comparison::NotEndsWith),
         b"+" => Operator::Math(Math::Add),
         b"-" => Operator::Math(Math::Subtract),
         b"*" => Operator::Math(Math::Multiply),
@@ -6531,6 +6559,17 @@ pub fn parse_block(
     scoped: bool,
     is_subexpression: bool,
 ) -> Block {
+    parse_block_inner(working_set, tokens, span, scoped, is_subexpression, true)
+}
+
+fn parse_block_inner(
+    working_set: &mut StateWorkingSet,
+    tokens: &[Token],
+    span: Span,
+    scoped: bool,
+    is_subexpression: bool,
+    compile: bool,
+) -> Block {
     let (lite_block, err) = lite_parse(tokens, working_set);
     if let Some(err) = err {
         working_set.error(err);
@@ -6597,7 +6636,7 @@ pub fn parse_block(
 
     // Do not try to compile blocks that are subexpressions, or when we've already had a parse
     // failure as that definitely will fail to compile
-    if !is_subexpression && working_set.parse_errors.is_empty() {
+    if compile && !is_subexpression && working_set.parse_errors.is_empty() {
         compile_block(working_set, &mut block);
     }
 
