@@ -2235,9 +2235,10 @@ impl PartialOrd for Value {
         // Compare two floating point numbers. The decision interval for equality is dynamically
         // scaled as the value being compared increases in magnitude.
         fn compare_floats(val: f64, other: f64) -> Option<Ordering> {
-            let prec = f64::EPSILON.max(val.abs() * f64::EPSILON);
+            let prec = f64::EPSILON.max(val.abs().max(other.abs()) * f64::EPSILON);
 
-            if (other - val).abs() < prec {
+            if val == other || (val.is_finite() && other.is_finite() && (other - val).abs() <= prec)
+            {
                 return Some(Ordering::Equal);
             }
 

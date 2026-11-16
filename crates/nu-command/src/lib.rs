@@ -33,6 +33,8 @@ mod stor;
 mod strings;
 #[cfg(feature = "os")]
 mod system;
+#[cfg(feature = "os")]
+mod uutils;
 mod viewers;
 
 pub use bytes::*;

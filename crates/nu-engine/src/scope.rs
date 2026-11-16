@@ -100,7 +100,7 @@ impl<'e, 's> ScopeData<'e, 's> {
                             record! {
                                 "description" => Value::string(x.description, span),
                                 "example" => Value::string(x.example, span),
-                                "result" => x.result.unwrap_or(Value::nothing(span)),
+                                "result" => x.result.map(|mut v| { set_example_span(&mut v, span); v }).unwrap_or(Value::nothing(span)),
                             },
                             span,
                         )
@@ -573,4 +573,23 @@ fn sort_rows(decls: &mut [Value]) {
         }
         _ => Ordering::Equal,
     });
+}
+
+// Example values are constructed outside the source map. Attach the caller's
+// span to every value exposed through scope, including nested table cells.
+fn set_example_span(value: &mut Value, span: Span) {
+    value.set_span(span);
+    match value {
+        Value::List { vals, .. } => {
+            for value in vals {
+                set_example_span(value, span);
+            }
+        }
+        Value::Record { val, .. } => {
+            for (_, value) in val.to_mut().iter_mut() {
+                set_example_span(value, span);
+            }
+        }
+        _ => (),
+    }
 }

@@ -73,3 +73,21 @@ fn test_case_insensitive_env_var() {
     assert_eq!(stack_path_lower, stack_path_upper);
     assert_eq!(stack_path_lower, stack_path_mixed);
 }
+
+#[test]
+fn foundation_a_float_equality_is_symmetric_and_inclusive() {
+    for (a, b) in [
+        (0.0, f64::EPSILON),
+        (1.0, 1.0 + f64::EPSILON),
+        (-1.0, -1.0 - f64::EPSILON),
+    ] {
+        let (a, b) = (Value::test_float(a), Value::test_float(b));
+        assert_eq!(a.partial_cmp(&b), Some(std::cmp::Ordering::Equal));
+        assert_eq!(b.partial_cmp(&a), Some(std::cmp::Ordering::Equal));
+    }
+    assert_ne!(Value::test_float(f64::INFINITY), Value::test_float(1.0));
+    assert_eq!(
+        Value::test_float(f64::NAN).partial_cmp(&Value::test_float(1.0)),
+        None
+    );
+}

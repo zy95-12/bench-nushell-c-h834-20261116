@@ -32,6 +32,35 @@ pub enum Type {
 }
 
 impl Type {
+    /// Least common supertype used when inferring collections.
+    pub fn widen(&self, other: &Type) -> Type {
+        match (self, other) {
+            _ if self == other => self.clone(),
+            (Type::Int | Type::Float | Type::Number, Type::Int | Type::Float | Type::Number) => {
+                Type::Number
+            }
+            (Type::List(a), Type::List(b)) => Type::list(a.widen(b)),
+            (Type::Record(a), Type::Record(b)) | (Type::Table(a), Type::Table(b)) => {
+                let fields = a
+                    .iter()
+                    .filter_map(|(name, ty)| {
+                        b.iter()
+                            .find(|(n, _)| n == name)
+                            .map(|(_, rhs)| (name.clone(), ty.widen(rhs)))
+                    })
+                    .collect();
+                if matches!(self, Type::Record(_)) {
+                    Type::Record(fields)
+                } else {
+                    Type::Table(fields)
+                }
+            }
+            _ if self.is_subtype_of(other) => other.clone(),
+            _ if other.is_subtype_of(self) => self.clone(),
+            _ => Type::Any,
+        }
+    }
+
     pub fn list(inner: Type) -> Self {
         Self::List(Box::new(inner))
     }

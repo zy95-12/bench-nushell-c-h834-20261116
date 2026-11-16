@@ -566,6 +566,13 @@ fn eval_instruction<D: DebugContext>(
             ctx.put_reg(*src_dst, result);
             Ok(Continue)
         }
+        Instruction::ValidateString { src } => {
+            let value = ctx.collect_reg(*src, *span)?;
+            let value_span = value.span();
+            let string = value.into_string()?;
+            ctx.put_reg(*src, Value::string(string, value_span).into_pipeline_data());
+            Ok(Continue)
+        }
         Instruction::StringAppend { src_dst, val } => {
             let string_value = ctx.collect_reg(*src_dst, *span)?;
             let operand_value = ctx.collect_reg(*val, *span)?;
@@ -613,9 +620,13 @@ fn eval_instruction<D: DebugContext>(
             let items_span = items.span();
             let mut list = list_value.into_list()?;
             list.extend(
-                items
-                    .into_list()
-                    .map_err(|_| ShellError::CannotSpreadAsList { span: items_span })?,
+                (if items.is_nothing() {
+                    Value::list(vec![], items_span)
+                } else {
+                    items
+                })
+                .into_list()
+                .map_err(|_| ShellError::CannotSpreadAsList { span: items_span })?,
             );
             ctx.put_reg(*src_dst, Value::list(list, list_span).into_pipeline_data());
             Ok(Continue)
@@ -649,9 +660,13 @@ fn eval_instruction<D: DebugContext>(
             let items_span = items.span();
             let mut record = record_value.into_record()?;
             // Not using .extend() here because it doesn't handle duplicates
-            for (key, val) in items
-                .into_record()
-                .map_err(|_| ShellError::CannotSpreadAsRecord { span: items_span })?
+            for (key, val) in (if items.is_nothing() {
+                Value::record(Record::new(), items_span)
+            } else {
+                items
+            })
+            .into_record()
+            .map_err(|_| ShellError::CannotSpreadAsRecord { span: items_span })?
             {
                 if let Some(first_value) = record.insert(&key, val) {
                     return Err(ShellError::ColumnDefinedTwice {
@@ -1198,6 +1213,8 @@ fn gather_arguments(
                     // Rest variable should span the spread syntax, not the list values
                     rest_span = Some(rest_span.map_or(spread_span, |s| s.append(spread_span)));
                     // All further positional args should go to spread
+                    always_spread = true;
+                } else if vals.is_nothing() {
                     always_spread = true;
                 } else if let Value::Error { error, .. } = vals {
                     return Err(*error);

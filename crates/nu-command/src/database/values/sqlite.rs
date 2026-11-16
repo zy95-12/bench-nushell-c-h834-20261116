@@ -651,18 +651,65 @@ fn read_entire_sqlite_db(
 }
 
 pub fn convert_sqlite_row_to_nu_value(row: &Row, span: Span, column_names: &[String]) -> Value {
+    let columns = row.as_ref().columns();
     let record = column_names
         .iter()
         .enumerate()
         .map(|(i, col)| {
-            (
-                col.clone(),
-                convert_sqlite_value_to_nu_value(row.get_ref_unwrap(i), span),
-            )
+            (col.clone(), {
+                let decl = columns[i].decl_type().unwrap_or("");
+                let value = row.get_ref_unwrap(i);
+                if decl.eq_ignore_ascii_case("json") || decl.eq_ignore_ascii_case("jsonb") {
+                    match value {
+                        ValueRef::Null => Value::nothing(span),
+                        ValueRef::Text(text) => json_column_value(text, span),
+                        ValueRef::Blob(bytes) => {
+                            // SQLite's JSONB format is private to SQLite. Let SQLite decode it.
+                            match Connection::open_in_memory().and_then(|conn| {
+                                conn.query_row("SELECT json(?1)", [bytes], |r| {
+                                    r.get::<_, String>(0)
+                                })
+                            }) {
+                                Ok(text) => json_column_value(text.as_bytes(), span),
+                                Err(err) => Value::error(
+                                    ShellError::GenericError {
+                                        error: "Invalid SQLite JSONB".into(),
+                                        msg: err.to_string(),
+                                        span: Some(span),
+                                        help: None,
+                                        inner: vec![],
+                                    },
+                                    span,
+                                ),
+                            }
+                        }
+                        _ => convert_sqlite_value_to_nu_value(value, span),
+                    }
+                } else {
+                    convert_sqlite_value_to_nu_value(value, span)
+                }
+            })
         })
         .collect();
 
     Value::record(record, span)
+}
+
+fn json_column_value(bytes: &[u8], span: Span) -> Value {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => crate::formats::convert_string_to_value_strict(text, span)
+            .unwrap_or_else(|err| Value::error(err, span)),
+        Err(err) => Value::error(
+            ShellError::GenericError {
+                error: "Invalid SQLite JSON".into(),
+                msg: err.to_string(),
+                span: Some(span),
+                help: None,
+                inner: vec![],
+            },
+            span,
+        ),
+    }
 }
 
 pub fn convert_sqlite_value_to_nu_value(value: ValueRef, span: Span) -> Value {

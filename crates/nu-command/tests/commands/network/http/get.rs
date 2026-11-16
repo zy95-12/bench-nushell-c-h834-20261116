@@ -337,3 +337,40 @@ fn http_get_timeout() {
     assert!(&actual.err.contains("nu::shell::io::timed_out"));
     assert!(&actual.err.contains("Timed out"));
 }
+
+#[test]
+fn http_preserves_status_errors_and_error_bodies() {
+    for (code, message) in [
+        (400, "Bad request (400)"),
+        (403, "Access forbidden (403)"),
+        (404, "Requested file not found (404)"),
+        (408, "Request timeout (408)"),
+    ] {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/")
+            .with_status(code)
+            .with_body("error body")
+            .expect(2)
+            .create();
+        let out = nu!(format!("http get {}", server.url()));
+        assert!(out.err.contains(message), "{}", out.err);
+        let out = nu!(format!("http get --allow-errors --raw {}", server.url()));
+        assert_eq!(out.out, "error body", "{}", out.err);
+        mock.assert();
+    }
+}
+
+#[test]
+fn http_generic_status_error_message() {
+    for code in [401, 500, 503] {
+        let mut server = Server::new();
+        let mock = server.mock("GET", "/").with_status(code).create();
+        let url = format!("{}/", server.url());
+        let out = nu!(format!("http get {url}"));
+        assert!(!out.status.success());
+        let message = format!("Cannot make request to {url}. Error is {code}");
+        assert!(out.err.contains(&message), "{}", out.err);
+        mock.assert();
+    }
+}

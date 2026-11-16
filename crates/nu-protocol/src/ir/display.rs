@@ -175,6 +175,7 @@ impl fmt::Display for FmtInstruction<'_> {
                 let decl = FmtDecl::new(self.engine_state, *decl_id);
                 write!(f, "{:WIDTH$} {decl}, {src_dst}", "call")
             }
+            Instruction::ValidateString { src } => write!(f, "{:WIDTH$} {src}", "validate-string"),
             Instruction::StringAppend { src_dst, val } => {
                 write!(f, "{:WIDTH$} {src_dst}, {val}", "string-append")
             }

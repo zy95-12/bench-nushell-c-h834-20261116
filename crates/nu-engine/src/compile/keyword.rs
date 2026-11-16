@@ -119,15 +119,19 @@ pub(crate) fn compile_if(
                     working_set,
                     builder,
                     else_expr,
-                    redirect_modes,
+                    redirect_modes.clone(),
                     Some(io_reg),
                     io_reg,
                 )?;
+                if !super::cleans_redirection(working_set, &else_expr.expr) {
+                    super::finish_redirection(builder, redirect_modes, io_reg)?;
+                }
             }
         }
     } else {
-        // We don't have an else expression/block, so just set io_reg = Empty
+        // No branch ran, but its redirection still needs to be closed.
         builder.load_empty(io_reg)?;
+        super::finish_redirection(builder, redirect_modes, io_reg)?;
     }
 
     // Set the end label
@@ -210,6 +214,7 @@ pub(crate) fn compile_match(
     // Match fall-through to jump to the end, if no match
     builder.load_empty(io_reg)?;
     builder.drop_reg(match_reg)?;
+    super::finish_redirection(builder, redirect_modes.clone(), io_reg)?;
     builder.jump(end_label, call.head)?;
 
     // Generate each of the match expressions. Handle guards here, if present.
@@ -274,6 +279,12 @@ pub(crate) fn compile_match(
                 Some(io_reg),
                 io_reg,
             )?;
+        }
+
+        if !matches!(expr.expr, Expr::Block(_))
+            && !super::cleans_redirection(working_set, &expr.expr)
+        {
+            super::finish_redirection(builder, redirect_modes.clone(), io_reg)?;
         }
 
         // Jump to the end after the match logic is done

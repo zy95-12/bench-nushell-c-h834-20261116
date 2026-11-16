@@ -181,6 +181,8 @@ pub enum Instruction {
     /// Append a value onto the end of a string. Uses `to_expanded_string(", ", ...)` on the value.
     /// Used for string interpolation literals. Not the same thing as the `++` operator.
     StringAppend { src_dst: RegId, val: RegId },
+    /// Require a string without coercing dynamic table column names.
+    ValidateString { src: RegId },
     /// Convert a string into a glob. Used for glob interpolation and setting glob variables. If the
     /// value is already a glob, it won't be modified (`no_expand` will have no effect).
     GlobFrom { src_dst: RegId, no_expand: bool },
@@ -310,6 +312,7 @@ impl Instruction {
             Instruction::CloseFile { .. } => None,
             Instruction::Call { src_dst, .. } => Some(src_dst),
             Instruction::StringAppend { src_dst, .. } => Some(src_dst),
+            Instruction::ValidateString { .. } => None,
             Instruction::GlobFrom { src_dst, .. } => Some(src_dst),
             Instruction::ListPush { src_dst, .. } => Some(src_dst),
             Instruction::ListSpread { src_dst, .. } => Some(src_dst),

@@ -34,6 +34,7 @@ impl Command for IntoString {
                 (Type::Number, Type::String),
                 (Type::String, Type::String),
                 (Type::Glob, Type::String),
+                (Type::CellPath, Type::String),
                 (Type::Bool, Type::String),
                 (Type::Filesize, Type::String),
                 (Type::Date, Type::String),
@@ -217,6 +218,7 @@ fn action(input: &Value, args: &Arguments, span: Span) -> Value {
         Value::Date { val, .. } => Value::string(val.format("%c").to_string(), span),
         Value::String { val, .. } => Value::string(val, span),
         Value::Glob { val, .. } => Value::string(val, span),
+        Value::CellPath { val, .. } => Value::string(val.to_string(), span),
         Value::Filesize { val, .. } => {
             if group_digits {
                 let decimal_value = digits.unwrap_or(0) as usize;

@@ -195,8 +195,8 @@ fn compile_pipeline(
         )?;
 
         // only clean up the redirection if current element is not
-        // a subexpression.  The subexpression itself already clean it.
-        if !is_subexpression(&element.expr.expr) {
+        // a subexpression or an inlined block call, which finish it themselves.
+        if !cleans_redirection(working_set, &element.expr.expr) {
             // Clean up the redirection
             finish_redirection(builder, redirect_modes, out_reg)?;
         }
@@ -207,12 +207,20 @@ fn compile_pipeline(
     Ok(())
 }
 
-fn is_subexpression(expr: &Expr) -> bool {
+fn cleans_redirection(working_set: &StateWorkingSet, expr: &Expr) -> bool {
     match expr {
+        // A nonempty tail captures the head with RedirectModes::value; only an
+        // empty tail forwards the outer redirection for the head to finish.
         Expr::FullCellPath(inner) => {
-            matches!(&inner.head.expr, &Expr::Subexpression(..))
+            inner.tail.is_empty() && cleans_redirection(working_set, &inner.head.expr)
         }
         Expr::Subexpression(..) => true,
+        Expr::Call(call) => {
+            let decl = working_set.get_decl(call.decl_id);
+            decl.is_keyword()
+                && matches!(decl.name(), "if" | "match")
+                && !call.named_iter().any(|(name, _, _)| name.item == "help")
+        }
         _ => false,
     }
 }
