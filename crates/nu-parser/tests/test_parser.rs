@@ -3072,3 +3072,159 @@ mod record {
         );
     }
 }
+
+#[test]
+fn fr1_external_embedded_subexpressions() {
+    test_external_call(
+        "^echo pre(1 + 2)mid(4)post",
+        "embedded subexpressions",
+        |_, args| {
+            let ExternalArgument::Regular(arg) = &args[0] else {
+                panic!()
+            };
+            let Expr::GlobInterpolation(parts, _) = &arg.expr else {
+                panic!("{arg:?}")
+            };
+            assert_eq!(parts.len(), 5);
+            assert!(matches!(&parts[0].expr, Expr::String(s) if s == "pre"));
+            assert!(
+                matches!(&parts[1].expr, Expr::FullCellPath(path) if matches!(path.head.expr, Expr::Subexpression(_)))
+            );
+            assert!(matches!(&parts[2].expr, Expr::String(s) if s == "mid"));
+            assert!(
+                matches!(&parts[3].expr, Expr::FullCellPath(path) if matches!(path.head.expr, Expr::Subexpression(_)))
+            );
+            assert!(matches!(&parts[4].expr, Expr::String(s) if s == "post"));
+        },
+    );
+    test_external_call("^echo 'pre(1)'", "quoted parentheses", |_, args| {
+        let ExternalArgument::Regular(arg) = &args[0] else {
+            panic!()
+        };
+        assert!(matches!(&arg.expr, Expr::String(s) if s == "pre(1)"));
+    });
+    for input in [b"^echo pre(1".as_slice(), b"^echo (1", b"^echo (1)(2"] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        parse(&mut ws, None, input, false);
+        assert!(
+            ws.parse_errors
+                .iter()
+                .any(|e| matches!(e, ParseError::Unclosed(..))),
+            "{input:?}: {:?}",
+            ws.parse_errors
+        );
+    }
+}
+
+#[test]
+fn fr2_missing_short_flag_keeps_named_span() {
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    ws.add_decl(
+        Signature::build("table")
+            .named("abbreviated", SyntaxShape::Int, "", Some('a'))
+            .predeclare(),
+    );
+    // The completer appends 'a' to "table -" before parsing.
+    let input = b"table -a";
+    let block = parse(&mut ws, None, input, false);
+    let expr = &block.pipelines[0].elements[0].expr;
+    let Expr::Call(call) = &expr.expr else {
+        panic!()
+    };
+    let named: Vec<_> = call.named_iter().collect();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].0.item, "abbreviated");
+    assert!(named[0].2.is_none());
+    assert_eq!(ws.get_span_contents(named[0].0.span), b"-a");
+    assert_eq!(expr.span.end, call.head.start + input.len());
+    assert_eq!(call.span().end, expr.span.end);
+    assert!(matches!(
+        ws.parse_errors.first(),
+        Some(ParseError::MissingFlagParam(..))
+    ));
+}
+
+#[test]
+fn fr2_cd_dash_remains_positional() {
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    ws.add_decl(
+        Signature::build("cd")
+            .switch("physical", "", Some('P'))
+            .optional("path", SyntaxShape::Directory, "")
+            .predeclare(),
+    );
+    let block = parse(&mut ws, None, b"cd -", false);
+    assert!(ws.parse_errors.is_empty(), "{:?}", ws.parse_errors);
+    let Expr::Call(call) = &block.pipelines[0].elements[0].expr.expr else {
+        panic!()
+    };
+    assert_eq!(call.named_iter().count(), 0);
+    assert_eq!(call.positional_iter().count(), 1);
+    assert!(
+        matches!(&call.positional_nth(0).unwrap().expr, Expr::Directory(path, _) if path == "-")
+    );
+}
+
+#[test]
+fn fr4_env_shorthand_requires_posix_name() {
+    for input in [b"1BAD=value cmd".as_slice(), b"A-B=value cmd"] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        let block = parse(&mut ws, None, input, false);
+        assert!(ws.parse_errors.is_empty(), "{:?}", ws.parse_errors);
+        let Expr::ExternalCall(head, _) = &block.pipelines[0].elements[0].expr.expr else {
+            panic!()
+        };
+        assert_eq!(
+            ws.get_span_contents(head.span),
+            input.split(|c| *c == b' ').next().unwrap()
+        );
+    }
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    let input = r#""\"'\"=\"foo\"""#;
+    let block = parse(&mut ws, None, input.as_bytes(), false);
+    assert!(ws.parse_errors.is_empty(), "{:?}", ws.parse_errors);
+    assert!(matches!(
+        &block.pipelines[0].elements[0].expr.expr,
+        Expr::String(value) if value == r#""'"="foo""#
+    ));
+}
+
+#[test]
+fn fr7_incomplete_binary_rhs_has_empty_span_after_operator() {
+    let engine = EngineState::new();
+    let mut ws = StateWorkingSet::new(&engine);
+    let block = parse(&mut ws, None, b"1 +", false);
+    let Expr::BinaryOp(_, op, rhs) = &block.pipelines[0].elements[0].expr.expr else {
+        panic!()
+    };
+    assert!(matches!(rhs.expr, Expr::Garbage));
+    assert_eq!(rhs.span, Span::new(op.span.end, op.span.end));
+    assert_ne!(rhs.span, op.span);
+}
+
+#[test]
+fn fr6_parse_unbalanced_span_covers_real_character() {
+    for input in [b"}".as_slice(), b")", b"foo}", b"foo)", b"{)", b"(}"] {
+        let engine = EngineState::new();
+        let mut ws = StateWorkingSet::new(&engine);
+        parse(&mut ws, None, input, false);
+        let span = ws
+            .parse_errors
+            .iter()
+            .find_map(|error| {
+                if let ParseError::Unbalanced(_, _, span) = error {
+                    Some(*span)
+                } else {
+                    None
+                }
+            })
+            .expect("expected an unbalanced delimiter error");
+        assert_eq!(span.end - span.start, 1);
+        assert!(matches!(ws.get_span_contents(span), b"}" | b")"));
+    }
+}

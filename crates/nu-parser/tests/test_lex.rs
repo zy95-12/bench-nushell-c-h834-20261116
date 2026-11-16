@@ -343,3 +343,16 @@ fn lex_manually() {
     let last_span = lex_state.output.last().unwrap().span;
     assert_eq!(&file[last_span.start - 10..last_span.end - 10], b"continue");
 }
+
+#[test]
+fn fr6_unbalanced_delimiter_spans_cover_character() {
+    for input in [b"}".as_slice(), b")", b"foo}", b"foo)", b"{)", b"(}"] {
+        let (_, error) = nu_parser::lex(input, 17, &[], &[], false);
+        let Some(nu_protocol::ParseError::Unbalanced(_, _, span)) = error else {
+            panic!("{input:?}: {error:?}")
+        };
+        assert_eq!(span.end - span.start, 1);
+        assert!(span.start >= 17 && span.end <= 17 + input.len());
+        assert!(matches!(input[span.start - 17], b'}' | b')'));
+    }
+}
