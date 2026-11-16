@@ -2066,7 +2066,10 @@ pub fn parse_paren_expr(
     if fcp_error_count > starting_error_count {
         let malformed_subexpr = working_set.parse_errors[starting_error_count..]
             .first()
-            .is_some_and(|e| matches!(e, ParseError::Unclosed(right, _) if right == ")" ));
+            .is_some_and(|e| {
+                matches!(e, ParseError::Unclosed(right, _) if right == ")")
+                    || matches!(e, ParseError::Unbalanced(..))
+            });
         if malformed_subexpr {
             working_set.parse_errors.truncate(starting_error_count);
             parse_string_interpolation(working_set, span)
@@ -5799,7 +5802,11 @@ pub fn parse_math_expression(
         }
         not_start_spans.clear();
 
-        while op_prec <= last_prec && expr_stack.len() > 1 {
+        while (op_prec < last_prec
+            || (op_prec == last_prec
+                && !matches!(op.expr, Expr::Operator(Operator::Math(Math::Pow)))))
+            && expr_stack.len() > 1
+        {
             // Collapse the right associated operations first
             // so that we can get back to a stack with a lower precedence
             let mut rhs = expr_stack
@@ -5811,7 +5818,10 @@ pub fn parse_math_expression(
 
             last_prec = op.precedence();
 
-            if last_prec < op_prec {
+            if last_prec < op_prec
+                || (last_prec == op_prec
+                    && matches!(op.expr, Expr::Operator(Operator::Math(Math::Pow))))
+            {
                 expr_stack.push(op);
                 expr_stack.push(rhs);
                 break;

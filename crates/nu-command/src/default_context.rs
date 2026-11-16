@@ -16,6 +16,10 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
         // them only accessible if the correct input value category is used with the
         // declaration
 
+        bind_command! { Detect, Query }
+        #[cfg(windows)]
+        bind_command! { Registry }
+
         // Database-related
         // Adds all related commands to query databases
         #[cfg(feature = "sqlite")]

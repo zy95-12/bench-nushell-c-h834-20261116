@@ -42,7 +42,7 @@ fn md_table() {
             echo [[name]; [jason]] | to md
         "#);
 
-    assert_eq!(actual.out, "|name||-||jason|");
+    assert_eq!(actual.out, "| name || --- || jason |");
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn md_table_pretty() {
             echo [[name]; [joseph]] | to md -p
         "#);
 
-    assert_eq!(actual.out, "| name   || ------ || joseph |");
+    assert_eq!(actual.out, "| name   || --- || joseph |");
 }
 
 #[test]
@@ -74,6 +74,6 @@ fn md_combined() {
 
     assert_eq!(
         actual.out,
-        "# Nu top meals| dish  || ----- || Arepa || Taco  || Pizza |"
+        "# Nu top meals| dish  || --- || Arepa || Taco  || Pizza |"
     );
 }

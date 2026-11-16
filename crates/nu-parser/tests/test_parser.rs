@@ -3228,3 +3228,30 @@ fn fr6_parse_unbalanced_span_covers_real_character() {
         assert!(matches!(ws.get_span_contents(span), b"}" | b")"));
     }
 }
+
+#[test]
+fn bare_interpolation_with_subexpressions_at_both_ends_ast() {
+    let engine_state = EngineState::new();
+    let mut working_set = StateWorkingSet::new(&engine_state);
+    let span = {
+        let id = working_set.add_file("interpolation".into(), b"(100 + 20 + 3)/bar/(300 + 20 + 1)");
+        working_set.get_span_for_file(id)
+    };
+    let expression = parse_expression(&mut working_set, &[span]);
+    assert!(
+        working_set.parse_errors.is_empty(),
+        "{:?}",
+        working_set.parse_errors
+    );
+    let Expr::StringInterpolation(parts) = expression.expr else {
+        panic!("{expression:?}")
+    };
+    assert_eq!(parts.len(), 3);
+    assert!(
+        matches!(&parts[0].expr, Expr::FullCellPath(path) if matches!(path.head.expr, Expr::Subexpression(_)))
+    );
+    assert!(matches!(&parts[1].expr, Expr::String(s) if s == "/bar/"));
+    assert!(
+        matches!(&parts[2].expr, Expr::FullCellPath(path) if matches!(path.head.expr, Expr::Subexpression(_)))
+    );
+}

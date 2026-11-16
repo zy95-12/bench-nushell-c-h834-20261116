@@ -1,7 +1,6 @@
 use nu_protocol::engine::EngineState;
 
-pub(crate) fn get_engine_state() -> EngineState {
-    let engine_state = nu_cmd_lang::create_default_context();
+pub(crate) fn add_command_context(engine_state: EngineState) -> EngineState {
     #[cfg(feature = "plugin")]
     let engine_state = nu_cmd_plugin::add_plugin_command_context(engine_state);
     let engine_state = nu_command::add_shell_command_context(engine_state);
@@ -16,6 +15,18 @@ mod tests {
     use nu_protocol::{Category, PositionalArg};
 
     #[test]
+    fn context_preserves_existing_engine_state() {
+        let mut state = nu_cmd_lang::create_default_context();
+        let mut working_set = nu_protocol::engine::StateWorkingSet::new(&state);
+        let id = working_set.add_file("existing-source".into(), b"existing content");
+        let span = working_set.get_span_for_file(id);
+        state.merge_delta(working_set.render()).unwrap();
+        let state = add_command_context(state);
+        assert_eq!(state.get_span_contents(span), b"existing content");
+        assert!(state.find_decl(b"detect columns", &[]).is_some());
+    }
+
+    #[test]
     fn arguments_end_period() {
         fn ends_period(cmd_name: &str, ty: &str, arg: PositionalArg, failures: &mut Vec<String>) {
             let arg_name = arg.name;
@@ -27,7 +38,7 @@ mod tests {
             }
         }
 
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -77,7 +88,7 @@ mod tests {
             }
         }
 
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -108,7 +119,7 @@ mod tests {
 
     #[test]
     fn signature_name_matches_command_name() {
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -134,7 +145,7 @@ mod tests {
 
     #[test]
     fn commands_declare_input_output_types() {
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -164,7 +175,7 @@ mod tests {
 
     #[test]
     fn no_search_term_duplicates() {
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -190,7 +201,7 @@ mod tests {
 
     #[test]
     fn description_end_period() {
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 
@@ -213,7 +224,7 @@ mod tests {
 
     #[test]
     fn description_start_uppercase() {
-        let ctx = get_engine_state();
+        let ctx = add_command_context(nu_cmd_lang::create_default_context());
         let decls = ctx.get_decls_sorted(true);
         let mut failures = Vec::new();
 

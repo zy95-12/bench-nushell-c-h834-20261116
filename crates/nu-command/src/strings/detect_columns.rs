@@ -179,6 +179,7 @@ fn guess_width(
     }
     if !args.noheader {
         let columns = result[0].clone();
+        check_duplicate_columns(columns.iter().map(String::as_str), input_span)?;
         Ok(result
             .into_iter()
             .skip(1)
@@ -257,6 +258,8 @@ fn detect_columns(
             }
         }
 
+        check_duplicate_columns(headers.iter().map(|h| h.item.as_str()), name_span)?;
+
         Ok(args
             .noheader
             .then_some(orig_headers)
@@ -305,6 +308,18 @@ fn detect_columns(
                     for header in &headers {
                         for pre_o in &pre_output {
                             if pre_o.0 == header.item {
+                                if record.contains(&header.item) {
+                                    return Value::error(
+                                        ShellError::GenericError {
+                                            error: "Duplicate column".into(),
+                                            msg: header.item.clone(),
+                                            span: Some(name_span),
+                                            help: None,
+                                            inner: vec![],
+                                        },
+                                        name_span,
+                                    );
+                                }
                                 record.push(&header.item, pre_o.1.clone());
                             }
                         }
@@ -559,4 +574,23 @@ mod test {
     fn test_examples() {
         crate::test_examples(DetectColumns)
     }
+}
+
+fn check_duplicate_columns<'a>(
+    columns: impl Iterator<Item = &'a str>,
+    span: Span,
+) -> Result<(), ShellError> {
+    let mut seen = std::collections::HashSet::new();
+    for column in columns {
+        if !seen.insert(column) {
+            return Err(ShellError::GenericError {
+                error: "Duplicate column".into(),
+                msg: format!("Duplicate column name: {column}"),
+                span: Some(span),
+                help: None,
+                inner: vec![],
+            });
+        }
+    }
+    Ok(())
 }

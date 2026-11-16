@@ -20,7 +20,7 @@ impl Command for Which {
     }
 
     fn description(&self) -> &str {
-        "Finds a program file, alias or custom command."
+        "Find a program, alias or command, or list all commands when no name is given."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -195,18 +195,57 @@ fn which(
         all: call.has_flag(engine_state, stack, "all")?,
     };
 
-    if which_args.applications.is_empty() {
-        return Err(ShellError::MissingParameter {
-            param_name: "application".into(),
-            span: head,
-        });
-    }
-
     let mut output = vec![];
 
     #[allow(deprecated)]
     let cwd = env::current_dir_str(engine_state, stack)?;
-    let paths = env::path_str(engine_state, stack, head)?;
+    let paths = match env::path_str(engine_state, stack, head) {
+        Ok(paths) => Some(paths),
+        Err(ShellError::EnvVarNotFoundAtRuntime { .. }) if which_args.applications.is_empty() => {
+            None
+        }
+        Err(error) => return Err(error),
+    };
+
+    if which_args.applications.is_empty() {
+        let mut seen = std::collections::HashSet::new();
+        for (name, id) in engine_state.get_decls_sorted(false) {
+            let name = String::from_utf8_lossy(&name).into_owned();
+            if which_args.all || seen.insert(name.clone()) {
+                output.push(entry(
+                    name,
+                    "",
+                    engine_state.get_decl(id).command_type(),
+                    head,
+                ));
+            }
+        }
+        for directory in paths.iter().flat_map(std::env::split_paths) {
+            let directory = if directory.is_absolute() {
+                directory
+            } else {
+                Path::new(&cwd).join(directory)
+            };
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
+            entries.sort_by_key(|e| e.file_name());
+            for file in entries {
+                let name = file.file_name().to_string_lossy().into_owned();
+                if let Ok(path) = which::which_in(&name, Some(directory.as_os_str()), &cwd) {
+                    if which_args.all || seen.insert(name.clone()) {
+                        output.push(entry(
+                            name,
+                            path.to_string_lossy(),
+                            CommandType::External,
+                            head,
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     for app in which_args.applications {
         let values = which_single(
@@ -214,7 +253,7 @@ fn which(
             which_args.all,
             engine_state,
             cwd.clone(),
-            paths.clone(),
+            paths.clone().unwrap_or_default(),
         );
         output.extend(values);
     }
