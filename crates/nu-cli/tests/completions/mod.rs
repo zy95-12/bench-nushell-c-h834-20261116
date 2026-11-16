@@ -1883,8 +1883,6 @@ fn variables_completions() {
     // Test completions for $nu
     let suggestions = completer.complete("$nu.", 4);
 
-    assert_eq!(19, suggestions.len());
-
     let expected: Vec<_> = vec![
         "cache-dir",
         "config-path",
@@ -1897,9 +1895,11 @@ fn variables_completions() {
         "home-path",
         "is-interactive",
         "is-login",
+        "is-lsp",
         "loginshell-path",
         "os-info",
         "pid",
+        #[cfg(feature = "plugin")]
         "plugin-path",
         "startup-time",
         "temp-path",
@@ -1908,6 +1908,7 @@ fn variables_completions() {
     ];
 
     // Match results
+    assert_eq!(expected.len(), suggestions.len());
     match_suggestions(&expected, &suggestions);
 
     // Test completions for $nu.h (filter)

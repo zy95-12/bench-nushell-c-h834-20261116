@@ -250,6 +250,7 @@ pub(crate) fn create_nu_constant(engine_state: &EngineState, span: Span) -> Valu
     );
 
     record.push("is-login", Value::bool(engine_state.is_login, span));
+    record.push("is-lsp", Value::bool(engine_state.is_lsp, span));
 
     record.push(
         "history-enabled",
