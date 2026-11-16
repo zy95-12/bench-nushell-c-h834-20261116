@@ -345,6 +345,7 @@ pub fn parse_for(working_set: &mut StateWorkingSet, lite_command: &LiteCommand) 
         block.signature.required_positional.insert(
             0,
             PositionalArg {
+                custom_completion: None,
                 name: String::new(),
                 desc: String::new(),
                 shape: var_type.to_shape(),

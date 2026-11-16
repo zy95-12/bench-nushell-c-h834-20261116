@@ -2256,6 +2256,46 @@ fn filecompletions_triggers_after_cursor() {
 }
 
 #[rstest]
+#[case("spam --f", vec!["--foo"])]
+#[case("spam --", vec!["--foo"])]
+#[case("spam -", vec!["--foo", "-b", "-f"])]
+fn extern_custom_completion_flag_names(
+    mut extern_completer: NuCompleter,
+    #[case] input: &str,
+    #[case] expected: Vec<&str>,
+) {
+    let suggestions = extern_completer.complete(input, input.len());
+    match_suggestions(&expected, &suggestions);
+}
+
+#[rstest]
+#[case("spam c")]
+#[case("spam --foo c")]
+#[case("spam --foo=c")]
+#[case("spam -f c")]
+#[case("spam -b c")]
+fn extern_custom_completion_value_prefix(mut extern_completer: NuCompleter, #[case] input: &str) {
+    let suggestions = extern_completer.complete(input, input.len());
+    match_suggestions(&vec!["cat"], &suggestions);
+}
+
+#[rstest]
+#[case("probe -b ", vec!["beta"])]
+#[case("probe --unknown ", vec!["alpha"])]
+fn extern_custom_completion_argument_identity(#[case] input: &str, #[case] expected: Vec<&str>) {
+    let (_, _, mut engine, mut stack) = new_engine();
+    let declarations = br#"
+        def first [] { [alpha] }
+        def second [] { [beta] }
+        extern probe [value: string@first, -a: string@first, -b: string@second]
+    "#;
+    assert!(support::merge_input(declarations, &mut engine, &mut stack).is_ok());
+    let mut completer = NuCompleter::new(Arc::new(engine), Arc::new(stack));
+    let suggestions = completer.complete(input, input.len());
+    match_suggestions(&expected, &suggestions);
+}
+
+#[rstest]
 fn extern_custom_completion_positional(mut extern_completer: NuCompleter) {
     let suggestions = extern_completer.complete("spam ", 5);
     let expected: Vec<_> = vec!["cat", "dog", "eel"];

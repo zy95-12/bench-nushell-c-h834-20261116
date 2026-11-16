@@ -40,6 +40,7 @@ fn test_signature_chained() {
     assert_eq!(
         signature.get_positional(0),
         Some(&PositionalArg {
+            custom_completion: None,
             name: "required".to_string(),
             desc: "required description".to_string(),
             shape: SyntaxShape::String,
@@ -50,6 +51,7 @@ fn test_signature_chained() {
     assert_eq!(
         signature.get_positional(1),
         Some(&PositionalArg {
+            custom_completion: None,
             name: "optional".to_string(),
             desc: "optional description".to_string(),
             shape: SyntaxShape::String,
@@ -60,6 +62,7 @@ fn test_signature_chained() {
     assert_eq!(
         signature.get_positional(2),
         Some(&PositionalArg {
+            custom_completion: None,
             name: "rest".to_string(),
             desc: "rest description".to_string(),
             shape: SyntaxShape::String,
@@ -71,6 +74,7 @@ fn test_signature_chained() {
     assert_eq!(
         signature.get_long_flag("req-named"),
         Some(Flag {
+            custom_completion: None,
             long: "req-named".to_string(),
             short: Some('r'),
             arg: Some(SyntaxShape::String),
@@ -84,6 +88,7 @@ fn test_signature_chained() {
     assert_eq!(
         signature.get_short_flag('r'),
         Some(Flag {
+            custom_completion: None,
             long: "req-named".to_string(),
             short: Some('r'),
             arg: Some(SyntaxShape::String),
@@ -169,4 +174,30 @@ fn test_signature_round_trip() {
         .for_each(|(lhs, rhs)| assert_eq!(lhs, rhs));
 
     assert_eq!(signature.rest_positional, returned.rest_positional,);
+}
+
+#[test]
+fn signature_builders_store_custom_completion_on_arguments() {
+    let shape = || {
+        SyntaxShape::CompleterWrapper(Box::new(SyntaxShape::String), nu_protocol::DeclId::new(7))
+    };
+    let signature = Signature::new("custom")
+        .required("required", shape(), "")
+        .optional("optional", shape(), "")
+        .rest("rest", shape(), "")
+        .named("named", shape(), "", None)
+        .required_named("required-named", shape(), "", None);
+    for arg in signature
+        .required_positional
+        .iter()
+        .chain(&signature.optional_positional)
+        .chain(signature.rest_positional.iter())
+    {
+        assert_eq!(arg.shape, SyntaxShape::String);
+        assert_eq!(arg.custom_completion, Some(nu_protocol::DeclId::new(7)));
+    }
+    for flag in &signature.named {
+        assert_eq!(flag.arg, Some(SyntaxShape::String));
+        assert_eq!(flag.custom_completion, Some(nu_protocol::DeclId::new(7)));
+    }
 }

@@ -1,5 +1,5 @@
 use nu_protocol::{
-    DeclId, ModuleId, Signature, Span, SyntaxShape, Type, Value, VarId,
+    DeclId, ModuleId, Signature, Span, Type, Value, VarId,
     ast::Expr,
     engine::{Command, EngineState, Stack, Visibility},
     record,
@@ -214,7 +214,8 @@ impl<'e, 's> ScopeData<'e, 's> {
 
         // required_positional
         for req in &signature.required_positional {
-            let custom = extract_custom_completion_from_arg(self.engine_state, &req.shape);
+            let custom =
+                extract_custom_completion_from_arg(self.engine_state, req.custom_completion);
 
             sig_records.push(Value::record(
                 record! {
@@ -233,7 +234,8 @@ impl<'e, 's> ScopeData<'e, 's> {
 
         // optional_positional
         for opt in &signature.optional_positional {
-            let custom = extract_custom_completion_from_arg(self.engine_state, &opt.shape);
+            let custom =
+                extract_custom_completion_from_arg(self.engine_state, opt.custom_completion);
             let default = if let Some(val) = &opt.default_value {
                 val.clone()
             } else {
@@ -258,7 +260,8 @@ impl<'e, 's> ScopeData<'e, 's> {
         // rest_positional
         if let Some(rest) = &signature.rest_positional {
             let name = if rest.name == "rest" { "" } else { &rest.name };
-            let custom = extract_custom_completion_from_arg(self.engine_state, &rest.shape);
+            let custom =
+                extract_custom_completion_from_arg(self.engine_state, rest.custom_completion);
 
             sig_records.push(Value::record(
                 record! {
@@ -289,7 +292,7 @@ impl<'e, 's> ScopeData<'e, 's> {
             let shape = if let Some(arg) = &named.arg {
                 flag_type = Value::string("named", span);
                 custom_completion_command_name =
-                    extract_custom_completion_from_arg(self.engine_state, arg);
+                    extract_custom_completion_from_arg(self.engine_state, named.custom_completion);
                 Value::string(arg.to_string(), span)
             } else {
                 flag_type = Value::string("switch", span);
@@ -544,15 +547,13 @@ impl<'e, 's> ScopeData<'e, 's> {
     }
 }
 
-fn extract_custom_completion_from_arg(engine_state: &EngineState, shape: &SyntaxShape) -> String {
-    match shape {
-        SyntaxShape::CompleterWrapper(_, custom_completion_decl_id) => {
-            let custom_completion_command = engine_state.get_decl(*custom_completion_decl_id);
-            let custom_completion_command_name: &str = custom_completion_command.name();
-            custom_completion_command_name.to_string()
-        }
-        _ => "".to_string(),
-    }
+fn extract_custom_completion_from_arg(
+    engine_state: &EngineState,
+    completion: Option<DeclId>,
+) -> String {
+    completion
+        .map(|id| engine_state.get_decl(id).name().to_string())
+        .unwrap_or_default()
 }
 
 fn sort_rows(decls: &mut [Value]) {
