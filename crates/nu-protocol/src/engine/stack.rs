@@ -44,6 +44,8 @@ pub struct Stack {
     pub env_hidden: Arc<HashMap<String, HashSet<String>>>,
     /// List of active overlays
     pub active_overlays: Vec<String>,
+    /// Overlays hidden in this runtime scope, including overlays absent from engine state.
+    pub hidden_overlays: Vec<String>,
     /// Argument stack for IR evaluation
     pub arguments: ArgumentStack,
     /// Error handler stack for IR evaluation
@@ -77,6 +79,7 @@ impl Stack {
             env_vars: Vec::new(),
             env_hidden: Arc::new(HashMap::new()),
             active_overlays: vec![DEFAULT_OVERLAY_NAME.to_string()],
+            hidden_overlays: Vec::new(),
             arguments: ArgumentStack::new(),
             error_handlers: ErrorHandlerStack::new(),
             recursion_count: 0,
@@ -97,6 +100,7 @@ impl Stack {
             env_vars: parent.env_vars.clone(),
             env_hidden: parent.env_hidden.clone(),
             active_overlays: parent.active_overlays.clone(),
+            hidden_overlays: parent.hidden_overlays.clone(),
             arguments: ArgumentStack::new(),
             error_handlers: ErrorHandlerStack::new(),
             recursion_count: parent.recursion_count,
@@ -129,6 +133,7 @@ impl Stack {
         unique_stack.env_vars = child.env_vars;
         unique_stack.env_hidden = child.env_hidden;
         unique_stack.active_overlays = child.active_overlays;
+        unique_stack.hidden_overlays = child.hidden_overlays;
         unique_stack.config = child.config;
         unique_stack
     }
@@ -313,6 +318,7 @@ impl Stack {
             env_vars,
             env_hidden: self.env_hidden.clone(),
             active_overlays: self.active_overlays.clone(),
+            hidden_overlays: self.hidden_overlays.clone(),
             arguments: ArgumentStack::new(),
             error_handlers: ErrorHandlerStack::new(),
             recursion_count: self.recursion_count,
@@ -346,6 +352,7 @@ impl Stack {
             env_vars,
             env_hidden: self.env_hidden.clone(),
             active_overlays: self.active_overlays.clone(),
+            hidden_overlays: self.hidden_overlays.clone(),
             arguments: ArgumentStack::new(),
             error_handlers: ErrorHandlerStack::new(),
             recursion_count: self.recursion_count,
@@ -626,11 +633,15 @@ impl Stack {
     }
 
     pub fn add_overlay(&mut self, name: String) {
+        self.hidden_overlays.retain(|o| o != &name);
         self.active_overlays.retain(|o| o != &name);
         self.active_overlays.push(name);
     }
 
     pub fn remove_overlay(&mut self, name: &str) {
+        if self.is_overlay_active(name) && !self.hidden_overlays.iter().any(|o| o == name) {
+            self.hidden_overlays.push(name.to_string());
+        }
         self.active_overlays.retain(|o| o != name);
     }
 
