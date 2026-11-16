@@ -767,60 +767,73 @@ pub fn check_pipeline_type(
     pipeline: &Pipeline,
     input_type: Type,
 ) -> (Type, Option<Vec<ParseError>>) {
-    let mut current_type = input_type;
+    let (types, errors) = check_pipeline_types(working_set, pipeline, input_type);
+    let ty = if types.len() == 1 {
+        types[0].clone()
+    } else {
+        Type::Any
+    };
+    (ty, errors)
+}
 
-    let mut output_errors: Option<Vec<ParseError>> = None;
-
-    'elem: for elem in &pipeline.elements {
+// Keep the public single-type API while retaining alternatives during checking.
+fn check_pipeline_types(
+    working_set: &StateWorkingSet,
+    pipeline: &Pipeline,
+    input_type: Type,
+) -> (Vec<Type>, Option<Vec<ParseError>>) {
+    let mut current_types = vec![input_type];
+    let mut errors = vec![];
+    for elem in &pipeline.elements {
         if elem.redirection.is_some() {
-            current_type = Type::Any;
+            current_types = vec![Type::Any];
         } else if let Expr::Call(call) = &elem.expr.expr {
-            let decl = working_set.get_decl(call.decl_id);
-
-            if current_type == Type::Any {
-                let mut new_current_type = None;
-                for (_, call_output) in decl.signature().input_output_types {
-                    if let Some(inner_current_type) = &new_current_type {
-                        if inner_current_type == &Type::Any {
-                            break;
-                        } else if inner_current_type != &call_output {
-                            // Union unequal types to Any for now
-                            new_current_type = Some(Type::Any)
-                        }
+            let signature = working_set.get_decl(call.decl_id).signature();
+            let mut outputs = vec![];
+            for (input, output) in &signature.input_output_types {
+                if current_types.iter().any(|ty| type_compatible(input, ty))
+                    && !outputs.contains(output)
+                {
+                    outputs.push(output.clone());
+                }
+            }
+            if outputs.is_empty() {
+                if !signature.input_output_types.is_empty() {
+                    errors.push(if current_types.len() == 1 {
+                        ParseError::InputMismatch(current_types[0].clone(), call.head)
                     } else {
-                        new_current_type = Some(call_output.clone())
-                    }
+                        ParseError::InputMismatchMultiple(format_types(&current_types), call.head)
+                    });
                 }
-
-                if let Some(new_current_type) = new_current_type {
-                    current_type = new_current_type
-                } else {
-                    current_type = Type::Any;
-                }
-                continue 'elem;
-            } else {
-                for (call_input, call_output) in decl.signature().input_output_types {
-                    if type_compatible(&call_input, &current_type) {
-                        current_type = call_output.clone();
-                        continue 'elem;
-                    }
-                }
+                outputs.push(Type::Any);
             }
-
-            if !decl.signature().input_output_types.is_empty() {
-                if let Some(output_errors) = &mut output_errors {
-                    output_errors.push(ParseError::InputMismatch(current_type, call.head))
-                } else {
-                    output_errors = Some(vec![ParseError::InputMismatch(current_type, call.head)]);
-                }
-            }
-            current_type = Type::Any;
+            current_types = outputs;
         } else {
-            current_type = elem.expr.ty.clone();
+            current_types = vec![elem.expr.ty.clone()];
         }
     }
+    (
+        current_types,
+        if errors.is_empty() {
+            None
+        } else {
+            Some(errors)
+        },
+    )
+}
 
-    (current_type, output_errors)
+fn format_types(types: &[Type]) -> String {
+    let names: Vec<_> = types.iter().map(ToString::to_string).collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [one, two] => format!("{one} or {two}"),
+        _ => format!(
+            "{}, or {}",
+            names[..names.len() - 1].join(", "),
+            names.last().unwrap()
+        ),
+    }
 }
 
 pub fn check_block_input_output(working_set: &StateWorkingSet, block: &Block) -> Vec<ParseError> {
@@ -829,21 +842,21 @@ pub fn check_block_input_output(working_set: &StateWorkingSet, block: &Block) ->
 
     for (input_type, output_type) in &block.signature.input_output_types {
         let mut current_type = input_type.clone();
-        let mut current_output_type = Type::Nothing;
+        let mut current_output_types = vec![Type::Nothing];
 
         for pipeline in &block.pipelines {
             let (checked_output_type, err) =
-                check_pipeline_type(working_set, pipeline, current_type);
-            current_output_type = checked_output_type;
+                check_pipeline_types(working_set, pipeline, current_type);
+            current_output_types = checked_output_type;
             current_type = Type::Nothing;
             if let Some(err) = err {
                 output_errors.extend_from_slice(&err);
             }
         }
 
-        if !type_compatible(output_type, &current_output_type)
-            && output_type != &Type::Any
-            && current_output_type != Type::Any
+        if !current_output_types
+            .iter()
+            .any(|ty| type_compatible(output_type, ty))
         {
             let span = if block.pipelines.is_empty() {
                 if let Some(span) = block.span {
@@ -863,11 +876,19 @@ pub fn check_block_input_output(working_set: &StateWorkingSet, block: &Block) ->
                     .span
             };
 
-            output_errors.push(ParseError::OutputMismatch(
-                output_type.clone(),
-                current_output_type.clone(),
-                span,
-            ))
+            output_errors.push(if current_output_types.len() == 1 {
+                ParseError::OutputMismatch(
+                    output_type.clone(),
+                    current_output_types[0].clone(),
+                    span,
+                )
+            } else {
+                ParseError::OutputMismatchMultiple(
+                    output_type.clone(),
+                    format_types(&current_output_types),
+                    span,
+                )
+            })
         }
     }
 
