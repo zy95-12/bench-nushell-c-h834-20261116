@@ -198,7 +198,7 @@ fn new_overlay_from_const_name() {
     let inp = &[
         "const mod = 'spam'",
         "overlay new $mod",
-        "overlay list | last",
+        "overlay list | last | get name",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -212,7 +212,7 @@ fn hide_overlay_from_const_name() {
         "const mod = 'spam'",
         "overlay new $mod",
         "overlay hide $mod",
-        "overlay list | str join ' '",
+        "overlay list | where active | get name | str join ' '",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -410,7 +410,7 @@ fn hide_overlay_scoped_env() {
 
 #[test]
 fn list_default_overlay() {
-    let inp = &["overlay list | last"];
+    let inp = &["overlay list | last | get name"];
 
     let actual = nu!(&inp.join("; "));
     let actual_repl = nu!(nu_repl_code(inp));
@@ -424,7 +424,7 @@ fn list_last_overlay() {
     let inp = &[
         r#"module spam { export def foo [] { "foo" } }"#,
         "overlay use spam",
-        "overlay list | last",
+        "overlay list | last | get name",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -439,7 +439,7 @@ fn list_overlay_scoped() {
     let inp = &[
         r#"module spam { export def foo [] { "foo" } }"#,
         "overlay use spam",
-        "do { overlay list | last }",
+        "do { overlay list | last | get name }",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -695,7 +695,7 @@ fn reset_overrides() {
 
 #[test]
 fn overlay_new() {
-    let inp = &["overlay new spam", "overlay list | last"];
+    let inp = &["overlay new spam", "overlay list | last | get name"];
 
     let actual = nu!(&inp.join("; "));
     let actual_repl = nu!(nu_repl_code(inp));
@@ -1080,7 +1080,7 @@ fn overlay_use_find_scoped_module() {
                     module spam { }
 
                     overlay use spam
-                    overlay list | last
+                    overlay list | last | get name
                 }
             ";
 
@@ -1196,7 +1196,7 @@ fn overlay_trim_single_quote() {
     let inp = &[
         r#"module spam { export def foo [] { "foo" } }"#,
         "overlay use 'spam'",
-        "overlay list | last ",
+        "overlay list | last | get name ",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -1227,7 +1227,7 @@ fn overlay_trim_double_quote() {
     let inp = &[
         r#"module spam { export def foo [] { "foo" } }"#,
         r#"overlay use "spam" "#,
-        "overlay list | last ",
+        "overlay list | last | get name ",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -1428,7 +1428,7 @@ fn alias_overlay_use_2() {
         "module spam { export alias b = overlay use inner }",
         "use spam",
         "spam b",
-        "overlay list | get 1",
+        "overlay list | where active | get 1 | get name",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -1447,7 +1447,7 @@ fn alias_overlay_use_3() {
         "module spam { export alias b = overlay use inner }",
         "use spam b",
         "b",
-        "overlay list | get 1",
+        "overlay list | where active | get 1 | get name",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -1465,7 +1465,7 @@ fn alias_overlay_new() {
         "alias on = overlay new",
         "on spam",
         "on eggs",
-        "overlay list | last",
+        "overlay list | last | get name",
     ];
 
     let actual = nu!(&inp.join("; "));
@@ -1619,4 +1619,99 @@ fn report_errors_in_export_env() {
 
     assert!(actual.err.contains("reported"));
     assert!(actual_repl.err.contains("reported"));
+}
+
+#[test]
+fn list_hidden_first_and_active_in_activation_order() {
+    let actual = nu!(r#"
+        overlay new first
+        overlay new second
+        overlay hide first
+        overlay new third
+        overlay hide second
+        overlay use first
+        overlay list | to nuon
+    "#);
+    assert_eq!(
+        actual.out,
+        "[[name, active]; [second, false], [zero, true], [third, true], [first, true]]"
+    );
+    assert!(actual.err.is_empty(), "{}", actual.err);
+}
+
+#[test]
+fn list_active_filter_and_column_types() {
+    let actual = nu!(r#"
+        overlay new spam
+        overlay hide spam
+        overlay list | each {|row| $"($row.name):($row.active):($row.name | describe):($row.active | describe)" } | str join ';'
+    "#);
+    assert_eq!(actual.out, "spam:false:string:bool;zero:true:string:bool");
+    assert!(actual.err.is_empty(), "{}", actual.err);
+}
+
+#[test]
+fn use_module_in_do_block() {
+    let actual = nu!("do { module spam { }; overlay use spam; overlay list | last | get name }");
+    assert_eq!(actual.out, "spam");
+    assert!(actual.err.is_empty(), "{}", actual.err);
+}
+
+#[test]
+fn use_and_hide_quoted_module_names() {
+    for quote in ["'", "\""] {
+        let actual = nu!(&format!(
+            "module {quote}spam eggs{quote} {{ }}; overlay use {quote}spam eggs{quote}; overlay list | last | get name | print; overlay hide {quote}spam eggs{quote}; overlay list | where name == 'spam eggs' | get active.0"
+        ));
+        assert_eq!(actual.out, "spam eggsfalse");
+        assert!(actual.err.is_empty(), "{}", actual.err);
+    }
+}
+
+#[test]
+fn list_hidden_local_overlays() {
+    for setup in ["overlay new local", "module local { }; overlay use local"] {
+        let actual = nu!(&format!(
+            "do {{ {setup}; overlay hide local; overlay list | to nuon }}"
+        ));
+        assert_eq!(actual.out, "[[name, active]; [local, false], [zero, true]]");
+        assert!(actual.err.is_empty(), "{}", actual.err);
+    }
+}
+
+#[test]
+fn list_hidden_local_and_global_without_duplicates_or_leaks() {
+    let actual = nu!(r#"
+        overlay new global
+        overlay hide global
+        do {
+            overlay new local
+            overlay hide local
+            overlay list | to nuon | print
+        }
+        overlay list | to nuon
+    "#);
+    assert_eq!(
+        actual.out,
+        "[[name, active]; [global, false], [local, false], [zero, true]][[name, active]; [global, false], [zero, true]]"
+    );
+    assert!(actual.err.is_empty(), "{}", actual.err);
+}
+
+#[test]
+fn list_reactivated_local_overlay_is_topmost() {
+    let actual = nu!(r#"
+        do {
+            overlay new local
+            overlay hide local
+            overlay new other
+            overlay use local
+            overlay list | to nuon
+        }
+    "#);
+    assert_eq!(
+        actual.out,
+        "[[name, active]; [zero, true], [other, true], [local, true]]"
+    );
+    assert!(actual.err.is_empty(), "{}", actual.err);
 }
