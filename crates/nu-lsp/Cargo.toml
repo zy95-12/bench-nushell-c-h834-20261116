@@ -14,6 +14,7 @@ nu-parser = { path = "../nu-parser", version = "0.106.0" }
 nu-protocol = { path = "../nu-protocol", version = "0.106.0" }
 nu-utils = { path = "../nu-utils", version = "0.106.0" }
 
+fancy-regex = { workspace = true }
 crossbeam-channel = { workspace = true }
 lsp-server = { workspace = true }
 lsp-textdocument = { workspace = true }
@@ -33,6 +34,7 @@ nu-std = { path = "../nu-std", version = "0.106.0" }
 nu-test-support = { path = "../nu-test-support", version = "0.106.0" }
 
 assert-json-diff = "2.0"
+rstest = { workspace = true, default-features = false }
 
 [lints]
 workspace = true

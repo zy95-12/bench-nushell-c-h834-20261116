@@ -218,120 +218,45 @@ mod hover_tests {
     };
     use assert_json_diff::assert_json_eq;
     use nu_test_support::fs::fixtures;
+    use rstest::rstest;
 
-    #[test]
-    fn hover_on_variable() {
+    #[rstest]
+    #[case::let_documentation("var.nu", (0, 0), "Create a variable and give it a value.\n\nThis command is a parser keyword. For details, check:\n  https://www.nushell.sh/book/thinking_in_nu.html\n---\n### Usage \n```nu\n  let {flags} <var_name> = <initial_value>\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n\n### Parameters\n\n  `var_name`: `<vardecl>` - Variable name.\n\n  `initial_value`: `<variable>` - Equals sign followed by value.\n\n\n### Input/output types\n\n```nu\n any | nothing\n\n```\n### Example(s)\n  Set a variable to a value\n```nu\n  let x = 10\n```\n  Set a variable to the result of an expression\n```nu\n  let x = 10 + 100\n```\n  Set a variable based on the condition\n```nu\n  let x = if false { -1 } else { 1 }\n```\n")]
+    #[case::variable("var.nu", (2, 0), "```\ntable\n``` \n---\nimmutable")]
+    #[case::custom_command(
+        "command.nu", (3, 0),
+        "Renders some greeting message\n---\n### Usage \n```nu\n  hello {flags}\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n"
+    )]
+    #[case::custom_in_custom(
+        "command.nu", (9, 7),
+        "\n---\n### Usage \n```nu\n  bar {flags}\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n"
+    )]
+    #[case::str_join(
+        "command.nu", (5, 8),
+        "Concatenate multiple strings into a single string, with an optional separator between each.\n---\n### Usage \n```nu\n  str join {flags} (separator)\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n\n### Parameters\n\n  `separator`: `<string>` - Optional separator to use when creating string. (optional)\n\n\n### Input/output types\n\n```nu\n list<any> | string\n string | string\n\n```\n### Example(s)\n  Create a string from input\n```nu\n  ['nu', 'shell'] | str join\n```\n  Create a string from input with a separator\n```nu\n  ['nu', 'shell'] | str join '-'\n```\n"
+    )]
+    #[case::cell_path1("use.nu", (2, 3), "```\nlist<any>\n```")]
+    #[case::cell_path2("use.nu", (2, 7), "```\nrecord<bar: int>\n```")]
+    #[case::cell_path3("use.nu", (2, 11), "```\nint\n```\n---\n2")]
+    fn hover_single_request(
+        #[case] filename: &str,
+        #[case] cursor: (u32, u32),
+        #[case] expected: &str,
+    ) {
         let (client_connection, _recv) = initialize_language_server(None, None);
 
         let mut script = fixtures();
-        script.push("lsp");
-        script.push("hover");
-        script.push("var.nu");
+        script.push("lsp/hover");
+        script.push(filename);
         let script = path_to_uri(&script);
 
         open_unchecked(&client_connection, script.clone());
-        let resp = send_hover_request(&client_connection, script, 2, 0);
+        let (line, character) = cursor;
+        let resp = send_hover_request(&client_connection, script, line, character);
 
-        assert_json_eq!(
-            result_from_message(resp),
-            serde_json::json!({ "contents": { "kind": "markdown", "value": "```\ntable\n``` \n---\nimmutable" } })
-        );
-    }
-
-    #[test]
-    fn hover_on_cell_path() {
-        let (client_connection, _recv) = initialize_language_server(None, None);
-
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("hover");
-        script.push("use.nu");
-        let script = path_to_uri(&script);
-        open_unchecked(&client_connection, script.clone());
-
-        let resp = send_hover_request(&client_connection, script.clone(), 2, 3);
         let result = result_from_message(resp);
-        assert_json_eq!(
-            result.pointer("/contents/value").unwrap(),
-            serde_json::json!("```\nlist<any>\n```")
-        );
-
-        let resp = send_hover_request(&client_connection, script.clone(), 2, 7);
-        let result = result_from_message(resp);
-        assert_json_eq!(
-            result.pointer("/contents/value").unwrap(),
-            serde_json::json!("```\nrecord<bar: int>\n```")
-        );
-
-        let resp = send_hover_request(&client_connection, script, 2, 11);
-        let result = result_from_message(resp);
-        assert_json_eq!(
-            result.pointer("/contents/value").unwrap(),
-            serde_json::json!("```\nint\n```\n---\n2")
-        );
-
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("workspace");
-        script.push("baz.nu");
-        let script = path_to_uri(&script);
-        open_unchecked(&client_connection, script.clone());
-
-        // For module record
-        let resp = send_hover_request(&client_connection, script, 8, 42);
-        let result = result_from_message(resp);
-        assert_json_eq!(
-            result.pointer("/contents/value").unwrap(),
-            serde_json::json!("```\nstring\n```\n---\nconst value")
-        );
-    }
-
-    #[test]
-    fn hover_on_custom_command() {
-        let (client_connection, _recv) = initialize_language_server(None, None);
-
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("hover");
-        script.push("command.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
-        let resp = send_hover_request(&client_connection, script, 3, 0);
-
-        assert_json_eq!(
-            result_from_message(resp),
-            serde_json::json!({
-                    "contents": {
-                    "kind": "markdown",
-                    "value": "Renders some greeting message\n---\n### Usage \n```nu\n  hello {flags}\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n"
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn hover_on_custom_in_custom() {
-        let (client_connection, _recv) = initialize_language_server(None, None);
-
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("hover");
-        script.push("command.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
-        let resp = send_hover_request(&client_connection, script, 9, 7);
-
-        assert_json_eq!(
-            result_from_message(resp),
-            serde_json::json!({
-                    "contents": {
-                    "kind": "markdown",
-                    "value": "\n---\n### Usage \n```nu\n  bar {flags}\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n"
-                }
-            })
-        );
+        assert_eq!(result["contents"]["kind"], "markdown");
+        assert_json_eq!(result["contents"]["value"], serde_json::json!(expected));
     }
 
     #[test]
@@ -360,109 +285,39 @@ mod hover_tests {
         assert!(hover_text.contains("Start-Sleep"));
     }
 
-    #[test]
-    fn hover_on_str_join() {
-        let (client_connection, _recv) = initialize_language_server(None, None);
-
+    #[rstest]
+    #[case::use_record("hover/use.nu", (0, 19), "\"```\\nrecord<foo: list<any>>\\n``` \\n---\\nimmutable\"", true)]
+    #[case::use_function("hover/use.nu", (0, 22), "\"\\n---\\n### Usage \\n```nu\\n  foo {flags}\\n```\\n\\n### Flags", true)]
+    #[case::cell_path("workspace/baz.nu", (8, 42), "\"```\\nstring\\n```\\n---\\nconst value\"", false)]
+    #[case::module_first("workspace/foo.nu", (15, 15), "\"# cmt\"", false)]
+    #[case::module_second("workspace/foo.nu", (17, 27), "\"# sub cmt\"", false)]
+    #[case::module_third("workspace/foo.nu", (19, 33), "\"# sub sub cmt\"", false)]
+    fn hover_on_exportable(
+        #[case] filename: &str,
+        #[case] cursor: (u32, u32),
+        #[case] expected_prefix: &str,
+        #[case] use_config: bool,
+    ) {
         let mut script = fixtures();
         script.push("lsp");
-        script.push("hover");
-        script.push("command.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
-        let resp = send_hover_request(&client_connection, script, 5, 8);
-
-        assert_json_eq!(
-            result_from_message(resp),
-            serde_json::json!({
-                    "contents": {
-                    "kind": "markdown",
-                    "value": "Concatenate multiple strings into a single string, with an optional separator between each.\n---\n### Usage \n```nu\n  str join {flags} (separator)\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n\n### Parameters\n\n  `separator`: `<string>` - Optional separator to use when creating string. (optional)\n\n\n### Input/output types\n\n```nu\n list<any> | string\n string | string\n\n```\n### Example(s)\n  Create a string from input\n```nu\n  ['nu', 'shell'] | str join\n```\n  Create a string from input with a separator\n```nu\n  ['nu', 'shell'] | str join '-'\n```\n"
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn hover_on_module() {
-        let (client_connection, _recv) = initialize_language_server(None, None);
-
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("workspace");
-        script.push("foo.nu");
-        let script = path_to_uri(&script);
-
-        open_unchecked(&client_connection, script.clone());
-        let resp = send_hover_request(&client_connection, script.clone(), 15, 15);
-        let result = result_from_message(resp);
-        assert_eq!(
-            result
-                .pointer("/contents/value")
-                .unwrap()
-                .to_string()
-                .replace("\\r", ""),
-            "\"# cmt\""
-        );
-
-        let resp = send_hover_request(&client_connection, script.clone(), 17, 27);
-        let result = result_from_message(resp);
-        assert_eq!(
-            result
-                .pointer("/contents/value")
-                .unwrap()
-                .to_string()
-                .replace("\\r", ""),
-            "\"# sub cmt\""
-        );
-
-        let resp = send_hover_request(&client_connection, script, 19, 33);
-        let result = result_from_message(resp);
-        assert_eq!(
-            result
-                .pointer("/contents/value")
-                .unwrap()
-                .to_string()
-                .replace("\\r", ""),
-            "\"# sub sub cmt\""
-        );
-    }
-
-    #[test]
-    fn hover_on_use_command() {
-        let mut script = fixtures();
-        script.push("lsp");
-        script.push("hover");
-        script.push("use.nu");
+        script.push(filename);
         let script_uri = path_to_uri(&script);
 
         let config = format!("use {}", script.to_str().unwrap());
-        let (client_connection, _recv) = initialize_language_server(Some(&config), None);
+        let (client_connection, _recv) =
+            initialize_language_server(use_config.then_some(&config), None);
 
         open_unchecked(&client_connection, script_uri.clone());
-        let resp = send_hover_request(&client_connection, script_uri.clone(), 0, 19);
+        let (line, character) = cursor;
+        let resp = send_hover_request(&client_connection, script_uri, line, character);
         let result = result_from_message(resp);
 
-        assert_eq!(
-            result
-                .pointer("/contents/value")
-                .unwrap()
-                .to_string()
-                .replace("\\r", ""),
-            "\"```\\nrecord<foo: list<any>>\\n``` \\n---\\nimmutable\""
-        );
+        let actual = result
+            .pointer("/contents/value")
+            .unwrap()
+            .to_string()
+            .replace("\\r", "");
 
-        let resp = send_hover_request(&client_connection, script_uri, 0, 22);
-        let result = result_from_message(resp);
-
-        assert!(
-            result
-                .pointer("/contents/value")
-                .unwrap()
-                .to_string()
-                .replace("\\r", "")
-                .starts_with("\"\\n---\\n### Usage \\n```nu\\n  foo {flags}\\n```\\n\\n### Flags")
-        );
+        assert!(actual.starts_with(expected_prefix));
     }
 }
