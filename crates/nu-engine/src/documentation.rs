@@ -749,7 +749,17 @@ where
 
     let mut long_desc = String::new();
     let _ = write!(long_desc, "\n{help_section_name}Flags{RESET}:\n");
-    for flag in &signature.named {
+    let mut flags: Vec<_> = signature.named.iter().collect();
+    flags.sort_by_key(|flag| {
+        if flag.required {
+            0
+        } else if flag.long == "help" {
+            1
+        } else {
+            2
+        }
+    });
+    for flag in flags {
         // Indentation
         long_desc.push_str("  ");
         // Short flag shown before long flag
@@ -797,6 +807,20 @@ mod tests {
     use nu_protocol::UseAnsiColoring;
 
     use super::*;
+
+    #[test]
+    fn flags_are_required_then_help_then_optional() {
+        let signature = Signature::build("test")
+            .switch("first", "", None)
+            .required_named("required", SyntaxShape::String, "", None)
+            .switch("last", "", None);
+        let section = get_flags_section(&signature, &HelpStyle::default(), |_| String::new());
+        let positions: Vec<_> = ["--required", "--help", "--first", "--last"]
+            .iter()
+            .map(|name| section.find(name).unwrap())
+            .collect();
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    }
 
     #[test]
     fn test_code_formatting() {

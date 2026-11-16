@@ -122,6 +122,7 @@ pub(crate) fn parse_commandline_args(
 
             // ide flags
             let lsp = call.has_flag(engine_state, &mut stack, "lsp")?;
+            engine_state.is_lsp = lsp;
             let include_path = call.get_flag_expr("include-path");
             let ide_goto_def: Option<Value> =
                 call.get_flag(engine_state, &mut stack, "ide-goto-def")?;

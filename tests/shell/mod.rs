@@ -445,3 +445,61 @@ fn main_script_subcommand_help_uses_script_name2() {
         assert!(!actual.err.contains("Usage: main foo"));
     })
 }
+
+#[test]
+fn milestone_m08_flag_diagnostics() {
+    let suggested = nu!("ls --full-path");
+    assert!(suggested.err.contains("Did you mean: `--full-paths`?"));
+    let unknown = nu!("ls -r");
+    assert!(unknown.err.contains("Use `--help` to see available flags"));
+    assert!(!unknown.err.contains("Available flags"));
+    let unknown_long = nu!("ls --zzzzzzzzzzzzzz");
+    assert!(
+        unknown_long
+            .err
+            .contains("Use `--help` to see available flags")
+    );
+}
+
+#[test]
+fn milestone_m08_nu_is_lsp() {
+    let actual = nu!("$nu.is-lsp | describe");
+    assert_eq!(actual.out, "bool");
+    let actual = nu!("$nu.is-lsp");
+    assert_eq!(actual.out, "false");
+}
+
+#[test]
+fn milestone_m08_filesize_help_example() {
+    let actual = nu!("help format filesize | ansi strip");
+    assert!(actual.out.contains("format filesize kB size"));
+    let actual = nu!("[[size]; [1000B]] | format filesize kB size | get size.0");
+    assert_eq!(actual.out, "1 kB");
+}
+
+#[test]
+fn milestone_m08_lsp_print_uses_stderr() {
+    Playground::setup("m08_lsp_print", |dirs, sandbox| {
+        sandbox.with_files(&[
+            FileWithContent(
+                "config.nu",
+                "print $nu.is-lsp; print --raw 'raw-marker'; 'pipe-marker' | print",
+            ),
+            FileWithContent("env.nu", ""),
+        ]);
+        let output = std::process::Command::new(nu_test_support::fs::executable_path())
+            .arg("--config")
+            .arg(dirs.test().join("config.nu"))
+            .arg("--env-config")
+            .arg(dirs.test().join("env.nu"))
+            .arg("--lsp")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("run lsp");
+        assert!(output.stdout.is_empty(), "{:?}", output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for expected in ["true", "raw-marker", "pipe-marker"] {
+            assert!(stderr.contains(expected), "{stderr}");
+        }
+    });
+}

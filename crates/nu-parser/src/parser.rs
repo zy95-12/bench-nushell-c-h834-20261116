@@ -24,6 +24,13 @@ use std::{
     sync::Arc,
 };
 
+fn unknown_flag_help(signature: &Signature, name: &str) -> String {
+    match nu_protocol::did_you_mean(signature.named.iter().map(|flag| flag.long.as_str()), name) {
+        Some(suggestion) => format!("Did you mean: `--{suggestion}`?"),
+        None => "Use `--help` to see available flags".into(),
+    }
+}
+
 pub fn garbage(working_set: &mut StateWorkingSet, span: Span) -> Expression {
     Expression::garbage(working_set, span)
 }
@@ -668,7 +675,7 @@ fn parse_long_flag(
                     sig.name.clone(),
                     long_name.clone(),
                     arg_span,
-                    sig.clone().formatted_flags(),
+                    unknown_flag_help(sig, &long_name),
                 ));
                 (
                     Some(Spanned {
@@ -748,7 +755,7 @@ fn parse_short_flags(
                     sig.name.clone(),
                     format!("-{}", String::from_utf8_lossy(contents)),
                     *first,
-                    sig.clone().formatted_flags(),
+                    "Use `--help` to see available flags".into(),
                 ));
             }
 
