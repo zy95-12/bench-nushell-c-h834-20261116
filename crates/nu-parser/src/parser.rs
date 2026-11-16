@@ -309,6 +309,41 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
                             continue;
                         }
                     }
+                    b'(' => {
+                        if index != *from {
+                            spans.push(make_span(*from, index));
+                        }
+                        let start = index;
+                        let mut depth = 1;
+                        let mut quote = None;
+                        let mut escaped = false;
+                        index += 1;
+                        while index < contents.len() {
+                            let c = contents[index];
+                            if let Some(q) = quote {
+                                if c == q && !escaped {
+                                    quote = None;
+                                }
+                                escaped = c == b'\\' && q == b'"' && !escaped;
+                            } else {
+                                match c {
+                                    b'"' | b'\'' | b'`' => quote = Some(c),
+                                    b'(' => depth += 1,
+                                    b')' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            index += 1;
+                        }
+                        let end = (index + 1).min(contents.len());
+                        spans.push(make_span(start, end));
+                        state = State::Bare { from: end };
+                    }
                     b'`' => {
                         if index != *from {
                             spans.push(make_span(*from, index))
@@ -358,6 +393,17 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
             }
         }
 
+        // Preserve expression values and cell paths for a standalone leading subexpression.
+        // Adjacent subexpressions and literal suffixes instead form one external string.
+        if contents.starts_with(b"(")
+            && (spans.len() == 1
+                || spans
+                    .get(1)
+                    .is_some_and(|part| working_set.get_span_contents(*part).starts_with(b".")))
+        {
+            return parse_paren_expr(working_set, span, &SyntaxShape::Any);
+        }
+
         // Log the spans that will be parsed
         if log::log_enabled!(log::Level::Trace) {
             let contents = spans
@@ -369,14 +415,21 @@ fn parse_external_string(working_set: &mut StateWorkingSet, span: Span) -> Expre
         }
 
         // Check if the whole thing is quoted. If not, it should be a glob
-        let quoted =
-            (contents.len() >= 3 && contents.starts_with(b"$\"") && contents.ends_with(b"\""))
-                || is_quoted(contents);
+        let quoted = (contents.len() >= 3 && contents.starts_with(b"$\"") && contents.ends_with(b"\""))
+                || is_quoted(contents)
+                // Leading subexpressions have always produced string interpolation for suffixes.
+                || contents.starts_with(b"(");
 
         // Parse each as its own string
         let exprs: Vec<Expression> = spans
             .into_iter()
-            .map(|span| parse_string(working_set, span))
+            .map(|span| {
+                if working_set.get_span_contents(span).starts_with(b"(") {
+                    parse_paren_expr(working_set, span, &SyntaxShape::Any)
+                } else {
+                    parse_string(working_set, span)
+                }
+            })
             .collect();
 
         if exprs
@@ -457,8 +510,6 @@ fn parse_regular_external_arg(working_set: &mut StateWorkingSet, span: Span) -> 
 
     if contents.starts_with(b"$") {
         parse_dollar_expr(working_set, span)
-    } else if contents.starts_with(b"(") {
-        parse_paren_expr(working_set, span, &SyntaxShape::Any)
     } else if contents.starts_with(b"[") {
         parse_list_expression(working_set, span, &SyntaxShape::Any)
     } else {
@@ -1114,6 +1165,17 @@ pub fn parse_internal_call(
                             }
                             spans_idx += 1;
                         } else {
+                            call.add_named((
+                                Spanned {
+                                    item: flag.long.clone(),
+                                    span: arg_span,
+                                },
+                                flag.short.map(|c| Spanned {
+                                    item: c.to_string(),
+                                    span: arg_span,
+                                }),
+                                None,
+                            ));
                             working_set.error(ParseError::MissingFlagParam(
                                 arg_shape.to_string(),
                                 arg_span,
@@ -3497,7 +3559,7 @@ pub fn parse_var_with_opt_type(
             let type_bytes = working_set.get_span_contents(full_span).to_vec();
 
             let (tokens, parse_error) =
-                lex_signature(&type_bytes, full_span.start, &[b','], &[], true);
+                lex_signature(&type_bytes, full_span.start, &[], &[b','], true);
 
             if let Some(parse_error) = parse_error {
                 working_set.error(parse_error);
@@ -5652,8 +5714,11 @@ pub fn parse_math_expression(
             // Handle broken math expr `1 +` etc
             working_set.error(ParseError::IncompleteMathExpression(spans[idx - 1]));
 
-            expr_stack.push(Expression::garbage(working_set, spans[idx - 1]));
-            expr_stack.push(Expression::garbage(working_set, spans[idx - 1]));
+            expr_stack.push(op);
+            expr_stack.push(Expression::garbage(
+                working_set,
+                Span::new(spans[idx - 1].end, spans[idx - 1].end),
+            ));
 
             break;
         }
@@ -5810,7 +5875,9 @@ pub fn parse_expression(working_set: &mut StateWorkingSet, spans: &[Span]) -> Ex
             let starting_error_count = working_set.parse_errors.len();
 
             let lhs_span = Span::new(spans[pos].start, spans[pos].start + point - 1);
-            if !is_identifier(working_set.get_span_contents(lhs_span)) {
+            if !split[0].iter().enumerate().all(|(i, c)| {
+                *c == b'_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
+            }) {
                 break;
             }
 
