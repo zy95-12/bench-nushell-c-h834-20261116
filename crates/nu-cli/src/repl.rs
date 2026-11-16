@@ -484,7 +484,13 @@ fn loop_iteration(ctx: LoopContext) -> (bool, Stack, Reedline) {
 
     start_time = std::time::Instant::now();
     line_editor = line_editor.with_transient_prompt(transient_prompt);
-    let input = line_editor.read_line(nu_prompt);
+    let input = match take_accepted_buffer(engine_state) {
+        Some(buffer) => {
+            line_editor.run_edit_commands(&[EditCommand::Clear]);
+            Ok(Signal::Success(buffer))
+        }
+        None => line_editor.read_line(nu_prompt),
+    };
     // we got our inputs, we can now drop our stack references
     // This lists all of the stack references that we have cleaned up
     line_editor = line_editor
@@ -1126,8 +1132,21 @@ fn run_shell_integration_reset_application_mode() {
 ///
 /// Clear the screen and output anything remaining in the EngineState buffer.
 ///
+fn take_accepted_buffer(engine_state: &EngineState) -> Option<String> {
+    let mut repl = engine_state.repl_state.lock().expect("repl state mutex");
+    if std::mem::take(&mut repl.accept) {
+        repl.cursor_pos = 0;
+        Some(std::mem::take(&mut repl.buffer))
+    } else {
+        None
+    }
+}
+
 fn flush_engine_state_repl_buffer(engine_state: &mut EngineState, line_editor: &mut Reedline) {
     let mut repl = engine_state.repl_state.lock().expect("repl state mutex");
+    if repl.accept {
+        return;
+    }
     line_editor.run_edit_commands(&[
         EditCommand::Clear,
         EditCommand::InsertString(repl.buffer.to_string()),
@@ -1643,5 +1662,30 @@ mod test_auto_cd {
         let input = "now🍪is";
         let actual = escape_special_vscode_bytes(input).unwrap();
         assert_eq!(input, actual);
+    }
+}
+
+#[cfg(test)]
+mod accept_tests {
+    use super::*;
+
+    #[test]
+    fn accepted_buffer_is_consumed_once() {
+        let engine = EngineState::new();
+        {
+            let mut state = engine.repl_state.lock().unwrap();
+            state.buffer = "echo accepted".into();
+            state.cursor_pos = state.buffer.len();
+            state.accept = true;
+        }
+        assert_eq!(
+            take_accepted_buffer(&engine).as_deref(),
+            Some("echo accepted")
+        );
+        assert!(take_accepted_buffer(&engine).is_none());
+        let state = engine.repl_state.lock().unwrap();
+        assert!(!state.accept);
+        assert!(state.buffer.is_empty());
+        assert_eq!(state.cursor_pos, 0);
     }
 }

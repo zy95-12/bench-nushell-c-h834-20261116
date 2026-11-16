@@ -32,8 +32,12 @@ pub enum Comparison {
     NotHas,
     #[strum(message = "Starts with")]
     StartsWith,
+    #[strum(message = "Does not start with")]
+    NotStartsWith,
     #[strum(message = "Ends with")]
     EndsWith,
+    #[strum(message = "Does not end with")]
+    NotEndsWith,
 }
 
 impl Comparison {
@@ -52,7 +56,9 @@ impl Comparison {
             Self::Has => "has",
             Self::NotHas => "not-has",
             Self::StartsWith => "starts-with",
+            Self::NotStartsWith => "not-starts-with",
             Self::EndsWith => "ends-with",
+            Self::NotEndsWith => "not-ends-with",
         }
     }
 }
@@ -258,6 +264,8 @@ impl Operator {
             Self::Bits(Bits::ShiftLeft) | Self::Bits(Bits::ShiftRight) => 85,
             Self::Comparison(Comparison::NotRegexMatch)
             | Self::Comparison(Comparison::RegexMatch)
+            | Self::Comparison(Comparison::NotStartsWith)
+            | Self::Comparison(Comparison::NotEndsWith)
             | Self::Comparison(Comparison::StartsWith)
             | Self::Comparison(Comparison::EndsWith)
             | Self::Comparison(Comparison::LessThan)

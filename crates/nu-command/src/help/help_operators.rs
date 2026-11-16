@@ -47,6 +47,8 @@ impl Command for HelpOperators {
             Operator::Comparison(Comparison::NotIn),
             Operator::Comparison(Comparison::Has),
             Operator::Comparison(Comparison::NotHas),
+            Operator::Comparison(Comparison::NotStartsWith),
+            Operator::Comparison(Comparison::NotEndsWith),
             Operator::Comparison(Comparison::StartsWith),
             Operator::Comparison(Comparison::EndsWith),
             Operator::Math(Math::Add),
@@ -172,6 +174,12 @@ fn description(operator: &Operator) -> &'static str {
         }
         Operator::Comparison(Comparison::NotHas) => {
             "Checks if a list does not contain a value, a string does not contain another, or if a record does not have a key."
+        }
+        Operator::Comparison(Comparison::NotStartsWith) => {
+            "Checks if a string does not start with another."
+        }
+        Operator::Comparison(Comparison::NotEndsWith) => {
+            "Checks if a string does not end with another."
         }
         Operator::Comparison(Comparison::StartsWith) => "Checks if a string starts with another.",
         Operator::Comparison(Comparison::EndsWith) => "Checks if a string ends with another.",

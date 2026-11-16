@@ -60,6 +60,8 @@ fn number_comparison_ops() -> Vec<OperatorItem> {
                 op,
                 Comparison::RegexMatch
                     | Comparison::NotRegexMatch
+                    | Comparison::NotStartsWith
+                    | Comparison::NotEndsWith
                     | Comparison::StartsWith
                     | Comparison::EndsWith
                     | Comparison::Has

@@ -809,14 +809,10 @@ pub(crate) fn compile_break(
         builder.push_break(call.head)?;
         builder.add_comment("break");
     } else {
-        // Fall back to calling the command if we can't find the loop target statically
-        builder.push(
-            Instruction::Call {
-                decl_id: call.decl_id,
-                src_dst: io_reg,
-            }
-            .into_spanned(call.head),
-        )?;
+        return Err(CompileError::NotInALoop {
+            msg: "`break` called from outside of a loop".into(),
+            span: Some(call.head),
+        });
     }
     Ok(())
 }
@@ -834,14 +830,10 @@ pub(crate) fn compile_continue(
         builder.push_continue(call.head)?;
         builder.add_comment("continue");
     } else {
-        // Fall back to calling the command if we can't find the loop target statically
-        builder.push(
-            Instruction::Call {
-                decl_id: call.decl_id,
-                src_dst: io_reg,
-            }
-            .into_spanned(call.head),
-        )?;
+        return Err(CompileError::NotInALoop {
+            msg: "`continue` called from outside of a loop".into(),
+            span: Some(call.head),
+        });
     }
     Ok(())
 }

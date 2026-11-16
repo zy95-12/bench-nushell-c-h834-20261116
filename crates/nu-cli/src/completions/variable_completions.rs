@@ -1,6 +1,6 @@
 use crate::completions::{Completer, CompletionOptions, SemanticSuggestion, SuggestionKind};
 use nu_protocol::{
-    Span, VarId,
+    ENV_VARIABLE_ID, IN_VARIABLE_ID, NU_VARIABLE_ID, Span, VarId,
     engine::{Stack, StateWorkingSet},
 };
 use reedline::Suggestion;
@@ -26,13 +26,17 @@ impl Completer for VariableCompletion {
         };
 
         // Variable completion (e.g: $en<tab> to complete $env)
-        let builtins = ["$nu", "$in", "$env"];
-        for builtin in builtins {
+        let builtins = [
+            ("$nu", NU_VARIABLE_ID),
+            ("$in", IN_VARIABLE_ID),
+            ("$env", ENV_VARIABLE_ID),
+        ];
+        for (builtin, id) in builtins {
             matcher.add_semantic_suggestion(SemanticSuggestion {
                 suggestion: Suggestion {
                     value: builtin.to_string(),
                     span: current_span,
-                    description: Some("reserved".into()),
+                    description: Some(working_set.get_variable(id).ty.to_string()),
                     ..Suggestion::default()
                 },
                 kind: Some(SuggestionKind::Variable),

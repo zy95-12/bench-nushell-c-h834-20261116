@@ -8,6 +8,7 @@ mod test_converters;
 mod test_custom_commands;
 mod test_engine;
 mod test_env;
+mod test_foundation_part_b;
 mod test_help;
 mod test_hiding;
 mod test_ide;
