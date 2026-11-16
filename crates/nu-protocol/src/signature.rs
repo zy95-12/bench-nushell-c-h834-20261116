@@ -1,6 +1,6 @@
 use crate::{
-    BlockId, DeprecationEntry, Example, FromValue, PipelineData, ShellError, SyntaxShape, Type,
-    Value, VarId,
+    BlockId, DeclId, DeprecationEntry, Example, FromValue, PipelineData, ShellError, SyntaxShape,
+    Type, Value, VarId,
     engine::{Call, Command, CommandType, EngineState, Stack},
 };
 use nu_derive_value::FromValue as DeriveFromValue;
@@ -24,6 +24,8 @@ pub struct Flag {
     // For custom commands
     pub var_id: Option<VarId>,
     pub default_value: Option<Value>,
+    #[serde(default)]
+    pub custom_completion: Option<DeclId>,
 }
 
 /// The signature definition for a positional argument
@@ -36,6 +38,8 @@ pub struct PositionalArg {
     // For custom commands
     pub var_id: Option<VarId>,
     pub default_value: Option<Value>,
+    #[serde(default)]
+    pub custom_completion: Option<DeclId>,
 }
 
 /// Command categories
@@ -248,6 +252,7 @@ impl Signature {
     pub fn add_help(mut self) -> Signature {
         // default help flag
         let flag = Flag {
+            custom_completion: None,
             long: "help".into(),
             short: Some('h'),
             arg: None,
@@ -313,10 +318,16 @@ impl Signature {
         shape: impl Into<SyntaxShape>,
         desc: impl Into<String>,
     ) -> Signature {
+        let (shape, custom_completion) = match shape.into() {
+            SyntaxShape::CompleterWrapper(shape, id) => (*shape, Some(id)),
+            shape => (shape, None),
+        };
+
         self.required_positional.push(PositionalArg {
+            custom_completion,
             name: name.into(),
             desc: desc.into(),
-            shape: shape.into(),
+            shape,
             var_id: None,
             default_value: None,
         });
@@ -331,10 +342,16 @@ impl Signature {
         shape: impl Into<SyntaxShape>,
         desc: impl Into<String>,
     ) -> Signature {
+        let (shape, custom_completion) = match shape.into() {
+            SyntaxShape::CompleterWrapper(shape, id) => (*shape, Some(id)),
+            shape => (shape, None),
+        };
+
         self.optional_positional.push(PositionalArg {
+            custom_completion,
             name: name.into(),
             desc: desc.into(),
-            shape: shape.into(),
+            shape,
             var_id: None,
             default_value: None,
         });
@@ -348,10 +365,16 @@ impl Signature {
         shape: impl Into<SyntaxShape>,
         desc: impl Into<String>,
     ) -> Signature {
+        let (shape, custom_completion) = match shape.into() {
+            SyntaxShape::CompleterWrapper(shape, id) => (*shape, Some(id)),
+            shape => (shape, None),
+        };
+
         self.rest_positional = Some(PositionalArg {
+            custom_completion,
             name: name.into(),
             desc: desc.into(),
-            shape: shape.into(),
+            shape,
             var_id: None,
             default_value: None,
         });
@@ -383,12 +406,18 @@ impl Signature {
         desc: impl Into<String>,
         short: Option<char>,
     ) -> Signature {
+        let (shape, custom_completion) = match shape.into() {
+            SyntaxShape::CompleterWrapper(shape, id) => (*shape, Some(id)),
+            shape => (shape, None),
+        };
+
         let (name, s) = self.check_names(name, short);
 
         self.named.push(Flag {
+            custom_completion,
             long: name,
             short: s,
-            arg: Some(shape.into()),
+            arg: Some(shape),
             required: false,
             desc: desc.into(),
             var_id: None,
@@ -406,12 +435,18 @@ impl Signature {
         desc: impl Into<String>,
         short: Option<char>,
     ) -> Signature {
+        let (shape, custom_completion) = match shape.into() {
+            SyntaxShape::CompleterWrapper(shape, id) => (*shape, Some(id)),
+            shape => (shape, None),
+        };
+
         let (name, s) = self.check_names(name, short);
 
         self.named.push(Flag {
+            custom_completion,
             long: name,
             short: s,
-            arg: Some(shape.into()),
+            arg: Some(shape),
             required: true,
             desc: desc.into(),
             var_id: None,
@@ -431,6 +466,7 @@ impl Signature {
         let (name, s) = self.check_names(name, short);
 
         self.named.push(Flag {
+            custom_completion: None,
             long: name,
             short: s,
             arg: None,

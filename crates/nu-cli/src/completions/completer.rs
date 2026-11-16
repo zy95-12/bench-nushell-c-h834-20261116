@@ -455,11 +455,46 @@ impl NuCompleter {
                 // for lsp completion, we don't trim the text,
                 // so that `def`s after pos can be completed
                 let mut positional_arg_indices = Vec::new();
+                let mut positional_idx = 0;
                 for (arg_idx, arg) in call.arguments.iter().enumerate() {
                     let span = arg.span();
                     if span.contains(pos) {
                         // if customized completion specified, it has highest priority
-                        if let Some(decl_id) = arg.expr().and_then(|e| e.custom_completion) {
+                        let signature = working_set.get_decl(call.decl_id).signature();
+                        let completion = match arg {
+                            Argument::Named((name, short, Some(value)))
+                                if value.span.contains(pos) =>
+                            {
+                                signature
+                                    .named
+                                    .iter()
+                                    .find(|flag| {
+                                        if name.item.is_empty() {
+                                            short.as_ref().is_some_and(|short| {
+                                                flag.short.map(|c| c.to_string()).as_ref()
+                                                    == Some(&short.item)
+                                            })
+                                        } else {
+                                            flag.long == name.item
+                                        }
+                                    })
+                                    .and_then(|flag| flag.custom_completion)
+                            }
+                            Argument::Positional(_)
+                                if strip_placeholder_if_any(working_set, &span, strip).1
+                                    != b"-" =>
+                            {
+                                signature
+                                    .required_positional
+                                    .iter()
+                                    .chain(&signature.optional_positional)
+                                    .nth(positional_idx)
+                                    .or(signature.rest_positional.as_ref())
+                                    .and_then(|arg| arg.custom_completion)
+                            }
+                            _ => None,
+                        };
+                        if let Some(decl_id) = completion {
                             // for `--foo <tab>` and `--foo=<tab>`, the arg span should be trimmed
                             let (new_span, prefix) = if matches!(arg, Argument::Named(_)) {
                                 strip_placeholder_with_rsplit(
@@ -529,8 +564,13 @@ impl NuCompleter {
                             },
                         );
                         break;
-                    } else if !matches!(arg, Argument::Named(_)) {
-                        positional_arg_indices.push(arg_idx);
+                    } else {
+                        if matches!(arg, Argument::Positional(_)) {
+                            positional_idx += 1;
+                        }
+                        if !matches!(arg, Argument::Named(_)) {
+                            positional_arg_indices.push(arg_idx);
+                        }
                     }
                 }
             }
