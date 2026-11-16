@@ -9,14 +9,14 @@ use nu_protocol::{ByteStream, LabeledError, Signals, shell_error::io::IoError};
 use serde_json::Value as JsonValue;
 use std::{
     collections::HashMap,
-    error::Error as StdError,
     io::Cursor,
     path::PathBuf,
     str::FromStr,
     sync::mpsc::{self, RecvTimeoutError},
     time::Duration,
 };
-use ureq::{Error, ErrorKind, Request, Response};
+use ureq::Error;
+type Response = ureq::http::Response<ureq::Body>;
 use url::Url;
 
 const HTTP_DOCS: &str = "https://www.nushell.sh/cookbook/http.html";
@@ -56,21 +56,107 @@ pub fn http_client(
     engine_state: &EngineState,
     stack: &mut Stack,
 ) -> Result<ureq::Agent, ShellError> {
-    let mut agent_builder = ureq::builder()
+    let mut agent_builder = ureq::Agent::config_builder()
         .user_agent("nushell")
-        .tls_connector(std::sync::Arc::new(tls(allow_insecure)?));
+        .http_status_as_error(false)
+        .save_redirect_history(true)
+        .max_redirects_will_error(false)
+        .tls_config(tls(allow_insecure)?);
 
     if let RedirectMode::Manual | RedirectMode::Error = redirect_mode {
-        agent_builder = agent_builder.redirects(0);
+        agent_builder = agent_builder.max_redirects(0);
     }
 
     if let Some(http_proxy) = retrieve_http_proxy_from_env(engine_state, stack) {
-        if let Ok(proxy) = ureq::Proxy::new(http_proxy) {
-            agent_builder = agent_builder.proxy(proxy);
+        if let Ok(proxy) = ureq::Proxy::new(&http_proxy) {
+            agent_builder = agent_builder.proxy(Some(proxy));
         }
     };
 
-    Ok(agent_builder.build())
+    Ok(agent_builder.build().into())
+}
+
+/// Cloneable request metadata shared by sending and full-response reporting.
+#[derive(Clone)]
+pub struct Request {
+    agent: ureq::Agent,
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    timeout: Option<Duration>,
+}
+impl Request {
+    pub fn new(agent: ureq::Agent, method: &str, url: &str) -> Self {
+        Self {
+            agent,
+            method: method.into(),
+            url: url.into(),
+            headers: vec![],
+            timeout: None,
+        }
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+    fn set(mut self, key: &str, value: &str) -> Self {
+        self.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(key));
+        self.headers.push((key.into(), value.into()));
+        self
+    }
+    fn send_body(self, body: impl ureq::AsSendBody) -> Result<Response, Error> {
+        let mut builder = ureq::http::Request::builder()
+            .method(self.method.as_str())
+            .uri(&self.url);
+        for (key, value) in &self.headers {
+            builder = builder.header(key, value);
+        }
+        let request = builder.body(body)?;
+        let request = self
+            .agent
+            .configure_request(request)
+            .timeout_global(self.timeout)
+            .build();
+        self.agent.run(request)
+    }
+    fn call(self) -> Result<Response, Error> {
+        self.send_body(())
+    }
+    fn send(self, mut reader: impl std::io::Read) -> Result<Response, Error> {
+        self.send_body(ureq::SendBody::from_reader(&mut reader))
+    }
+    fn send_bytes(self, data: &[u8]) -> Result<Response, Error> {
+        self.send_body(data)
+    }
+    fn send_string(self, data: &str) -> Result<Response, Error> {
+        self.send_body(data)
+    }
+    fn send_json(self, data: impl serde::Serialize) -> Result<Response, Error> {
+        let data = serde_json::to_vec(&data).map_err(|e| Error::Io(std::io::Error::other(e)))?;
+        self.set("Content-Type", "application/json").send_body(data)
+    }
+    fn send_form(self, data: &[(&str, &str)]) -> Result<Response, Error> {
+        let data =
+            serde_urlencoded::to_string(data).map_err(|e| Error::Io(std::io::Error::other(e)))?;
+        self.set("Content-Type", "application/x-www-form-urlencoded")
+            .send_body(data)
+    }
+}
+
+// ureq body timeouts are wrapped in io::Error. Preserve the shell timeout category.
+struct ResponseReader(ureq::BodyReader<'static>);
+impl std::io::Read for ResponseReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf).map_err(|e| {
+            if matches!(
+                e.get_ref().and_then(|e| e.downcast_ref::<Error>()),
+                Some(Error::Timeout(_))
+            ) {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "Timed out reading HTTP body")
+            } else {
+                e
+            }
+        })
+    }
 }
 
 pub fn http_parse_url(
@@ -119,7 +205,11 @@ pub fn response_to_buffer(
 ) -> PipelineData {
     // Try to get the size of the file to be downloaded.
     // This is helpful to show the progress of the stream.
-    let buffer_size = match response.header("content-length") {
+    let buffer_size = match response
+        .headers()
+        .get("content-length")
+        .and_then(|h| h.to_str().ok())
+    {
         Some(content_length) => {
             let content_length = content_length.parse::<u64>().unwrap_or_default();
 
@@ -134,14 +224,18 @@ pub fn response_to_buffer(
 
     // Try to guess whether the response is definitely intended to binary or definitely intended to
     // be UTF-8 text. Otherwise specify `None` and just guess. This doesn't have to be thorough.
-    let content_type_lowercase = response.header("content-type").map(|s| s.to_lowercase());
+    let content_type_lowercase = response
+        .headers()
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_lowercase());
     let response_type = match content_type_lowercase.as_deref() {
         Some("application/octet-stream") => ByteStreamType::Binary,
         Some(h) if h.contains("charset=utf-8") => ByteStreamType::String,
         _ => ByteStreamType::Unknown,
     };
 
-    let reader = response.into_reader();
+    let reader = ResponseReader(response.into_body().into_reader());
 
     PipelineData::byte_stream(
         ByteStream::read(reader, span, engine_state.signals().clone(), response_type)
@@ -550,7 +644,7 @@ pub fn request_set_timeout(
             });
         }
 
-        request = request.timeout(Duration::from_nanos(val as u64));
+        request.timeout = Some(Duration::from_nanos(val as u64));
     }
 
     Ok(request)
@@ -621,62 +715,39 @@ pub fn request_add_custom_headers(
 
 fn handle_response_error(span: Span, requested_url: &str, response_err: Error) -> ShellError {
     match response_err {
-        Error::Status(301, _) => ShellError::NetworkFailure {
-            msg: format!("Resource moved permanently (301): {requested_url:?}"),
+        Error::StatusCode(code) => status_error(span, requested_url, code),
+        Error::Timeout(_) => IoError::new(
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Timed out making HTTP request",
+            ),
             span,
-        },
-        Error::Status(400, _) => ShellError::NetworkFailure {
-            msg: format!("Bad request (400) to {requested_url:?}"),
-            span,
-        },
-        Error::Status(403, _) => ShellError::NetworkFailure {
-            msg: format!("Access forbidden (403) to {requested_url:?}"),
-            span,
-        },
-        Error::Status(404, _) => ShellError::NetworkFailure {
-            msg: format!("Requested file not found (404): {requested_url:?}"),
-            span,
-        },
-        Error::Status(408, _) => ShellError::NetworkFailure {
-            msg: format!("Request timeout (408): {requested_url:?}"),
-            span,
-        },
-        Error::Status(_, _) => ShellError::NetworkFailure {
+            None,
+        )
+        .into(),
+        Error::Io(e) => IoError::new(e, span, None).into(),
+        Error::ConnectionFailed => ShellError::NetworkFailure {
             msg: format!(
-                "Cannot make request to {:?}. Error is {:?}",
-                requested_url,
-                response_err.to_string()
+                "Cannot make request to {requested_url}, there was an error establishing a connection."
             ),
             span,
         },
-
-        Error::Transport(t) => {
-            let generic_network_failure = || ShellError::NetworkFailure {
-                msg: t.to_string(),
-                span,
-            };
-            match t.kind() {
-                ErrorKind::ConnectionFailed => ShellError::NetworkFailure {
-                    msg: format!(
-                        "Cannot make request to {requested_url}, there was an error establishing a connection.",
-                    ),
-                    span,
-                },
-                ErrorKind::Io => 'io: {
-                    let Some(source) = t.source() else {
-                        break 'io generic_network_failure();
-                    };
-
-                    let Some(io_error) = source.downcast_ref::<std::io::Error>() else {
-                        break 'io generic_network_failure();
-                    };
-
-                    ShellError::Io(IoError::new(io_error, span, None))
-                }
-                _ => generic_network_failure(),
-            }
-        }
+        e => ShellError::NetworkFailure {
+            msg: e.to_string(),
+            span,
+        },
     }
+}
+fn status_error(span: Span, requested_url: &str, code: u16) -> ShellError {
+    let msg = match code {
+        301 => format!("Resource moved permanently (301): {requested_url:?}"),
+        400 => format!("Bad request (400) to {requested_url:?}"),
+        403 => format!("Access forbidden (403) to {requested_url:?}"),
+        404 => format!("Requested file not found (404): {requested_url:?}"),
+        408 => format!("Request timeout (408): {requested_url:?}"),
+        _ => format!("Cannot make request to {requested_url}. Error is {code}"),
+    };
+    ShellError::NetworkFailure { msg, span }
 }
 
 pub struct RequestFlags {
@@ -746,12 +817,12 @@ pub fn check_response_redirection(
     response: &Result<Response, ShellErrorOrRequestError>,
 ) -> Result<(), ShellError> {
     if let Ok(resp) = response {
-        if RedirectMode::Error == redirect_mode && (300..400).contains(&resp.status()) {
+        if RedirectMode::Error == redirect_mode && resp.status().is_redirection() {
             return Err(ShellError::NetworkFailure {
                 msg: format!(
                     "Redirect encountered when redirect handling mode was 'error' ({} {})",
-                    resp.status(),
-                    resp.status_text()
+                    resp.status().as_u16(),
+                    resp.status().canonical_reason().unwrap_or("")
                 ),
                 span,
             });
@@ -772,7 +843,11 @@ fn request_handle_response_content(
     // #response_to_buffer moves "resp" making it impossible to read headers later.
     // Wrapping it into a closure to call when needed
     let mut consume_response_body = |response: Response| {
-        let content_type = response.header("content-type").map(|s| s.to_owned());
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_owned());
 
         match content_type {
             Some(content_type) => transform_response_using_content_type(
@@ -810,7 +885,7 @@ fn request_handle_response_content(
             record! {
                 "headers" => Value::record(headers, span),
                 "body" => body,
-                "status" => Value::int(response_status as i64, span),
+                "status" => Value::int(response_status.as_u16() as i64, span),
             },
             span,
         );
@@ -831,66 +906,47 @@ pub fn request_handle_response(
     request: Request,
 ) -> Result<PipelineData, ShellError> {
     match response {
-        Ok(resp) => request_handle_response_content(
-            engine_state,
-            stack,
-            span,
-            requested_url,
-            flags,
-            resp,
-            request,
-        ),
-        Err(e) => match e {
-            ShellErrorOrRequestError::ShellError(e) => Err(e),
-            ShellErrorOrRequestError::RequestError(_, e) => {
-                if flags.allow_errors {
-                    if let Error::Status(_, resp) = *e {
-                        Ok(request_handle_response_content(
-                            engine_state,
-                            stack,
-                            span,
-                            requested_url,
-                            flags,
-                            resp,
-                            request,
-                        )?)
-                    } else {
-                        Err(handle_response_error(span, requested_url, *e))
-                    }
-                } else {
-                    Err(handle_response_error(span, requested_url, *e))
-                }
+        Ok(resp) => {
+            if !flags.allow_errors && resp.status().is_client_error()
+                || !flags.allow_errors && resp.status().is_server_error()
+            {
+                return Err(status_error(span, requested_url, resp.status().as_u16()));
             }
-        },
+            request_handle_response_content(
+                engine_state,
+                stack,
+                span,
+                requested_url,
+                flags,
+                resp,
+                request,
+            )
+        }
+        Err(ShellErrorOrRequestError::ShellError(e)) => Err(e),
+        Err(ShellErrorOrRequestError::RequestError(_, e)) => {
+            Err(handle_response_error(span, requested_url, *e))
+        }
     }
 }
 
 type Headers = HashMap<String, Vec<String>>;
 
 fn extract_request_headers(request: &Request) -> Headers {
-    request
-        .header_names()
-        .iter()
-        .map(|name| {
-            (
-                name.clone(),
-                request.all(name).iter().map(|e| e.to_string()).collect(),
-            )
-        })
-        .collect()
+    let mut headers = Headers::new();
+    for (name, value) in &request.headers {
+        headers.entry(name.clone()).or_default().push(value.clone());
+    }
+    headers
 }
-
 fn extract_response_headers(response: &Response) -> Headers {
-    response
-        .headers_names()
-        .iter()
-        .map(|name| {
-            (
-                name.clone(),
-                response.all(name).iter().map(|e| e.to_string()).collect(),
-            )
-        })
-        .collect()
+    let mut headers = Headers::new();
+    for (name, value) in response.headers() {
+        headers
+            .entry(name.to_string())
+            .or_default()
+            .push(value.to_str().unwrap_or("").into());
+    }
+    headers
 }
 
 fn headers_to_nu(headers: &Headers, span: Span) -> Result<PipelineData, ShellError> {
@@ -932,7 +988,17 @@ pub fn request_handle_response_headers(
     response: Result<Response, ShellErrorOrRequestError>,
 ) -> Result<PipelineData, ShellError> {
     match response {
-        Ok(resp) => headers_to_nu(&extract_response_headers(&resp), span),
+        Ok(resp) => {
+            if resp.status().is_client_error() || resp.status().is_server_error() {
+                use ureq::ResponseExt;
+                return Err(status_error(
+                    span,
+                    &resp.get_uri().to_string(),
+                    resp.status().as_u16(),
+                ));
+            }
+            headers_to_nu(&extract_response_headers(&resp), span)
+        }
         Err(e) => match e {
             ShellErrorOrRequestError::ShellError(e) => Err(e),
             ShellErrorOrRequestError::RequestError(requested_url, e) => {

@@ -25,7 +25,6 @@ use nu_utils::{get_ls_colors, terminal_size};
 type ShellResult<T> = Result<T, ShellError>;
 type NuPathBuf = nu_path::PathBuf<Absolute>;
 
-const STREAM_PAGE_SIZE: usize = 1000;
 const DEFAULT_TABLE_WIDTH: usize = 80;
 
 #[derive(Clone)]
@@ -878,7 +877,8 @@ impl Iterator for PagingTableCreator {
                 // Pull from stream until time runs out or we have enough items
                 (batch, end) = stream_collect(
                     &mut self.stream,
-                    STREAM_PAGE_SIZE,
+                    usize::from(self.config.table.stream_page_size.get()),
+                    self.config.table.batch_duration,
                     self.engine_state.signals(),
                 );
             }
@@ -931,6 +931,7 @@ impl Iterator for PagingTableCreator {
 fn stream_collect(
     stream: impl Iterator<Item = Value>,
     size: usize,
+    duration: std::time::Duration,
     signals: &Signals,
 ) -> (Vec<Value>, bool) {
     let start_time = Instant::now();
@@ -941,7 +942,7 @@ fn stream_collect(
         batch.push(item);
 
         // If we've been buffering over a second, go ahead and send out what we have so far
-        if (Instant::now() - start_time).as_secs() >= 1 {
+        if Instant::now() - start_time >= duration {
             end = false;
             break;
         }
@@ -1224,5 +1225,38 @@ fn get_table_width(width_param: Option<i64>) -> usize {
         w as usize
     } else {
         DEFAULT_TABLE_WIDTH
+    }
+}
+
+#[cfg(test)]
+mod foundation_a_tests {
+    use super::*;
+    #[test]
+    fn configured_stream_batch_limits_are_used() {
+        let mut input = (0..5).map(Value::test_int);
+        let (page, end) = stream_collect(
+            &mut input,
+            2,
+            std::time::Duration::from_secs(60),
+            &Signals::empty(),
+        );
+        assert_eq!(page.len(), 2);
+        assert!(!end);
+        let (page, end) = stream_collect(
+            &mut input,
+            100,
+            std::time::Duration::ZERO,
+            &Signals::empty(),
+        );
+        assert_eq!(page.len(), 1);
+        assert!(!end);
+        let (page, end) = stream_collect(
+            &mut input,
+            100,
+            std::time::Duration::from_secs(60),
+            &Signals::empty(),
+        );
+        assert_eq!(page.len(), 2);
+        assert!(end);
     }
 }

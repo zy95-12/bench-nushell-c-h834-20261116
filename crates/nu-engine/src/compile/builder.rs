@@ -234,6 +234,7 @@ impl BlockBuilder {
                 decl_id: _,
                 src_dst,
             } => allocate(&[*src_dst], &[*src_dst]),
+            Instruction::ValidateString { src } => allocate(&[*src], &[*src]),
             Instruction::StringAppend { src_dst, val } => allocate(&[*src_dst, *val], &[*src_dst]),
             Instruction::GlobFrom {
                 src_dst,

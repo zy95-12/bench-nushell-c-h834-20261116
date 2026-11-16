@@ -277,6 +277,8 @@ pub(crate) fn compile_expression(
                         None,
                         reg,
                     )?;
+                    builder
+                        .push(Instruction::ValidateString { src: reg }.into_spanned(column.span))?;
                     Ok(reg)
                 })
                 .collect::<Result<Vec<RegId>, CompileError>>()?;

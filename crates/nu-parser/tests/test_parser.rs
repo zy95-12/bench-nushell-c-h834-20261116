@@ -3255,3 +3255,45 @@ fn bare_interpolation_with_subexpressions_at_both_ends_ast() {
         matches!(&parts[2].expr, Expr::FullCellPath(path) if matches!(path.head.expr, Expr::Subexpression(_)))
     );
 }
+
+#[test]
+fn foundation_a_collection_types_widen() {
+    for (source, expected) in [
+        ("[1 2]", Type::list(Type::Int)),
+        ("[1.0 2.0]", Type::list(Type::Float)),
+        ("[[1 2] [3 4]]", Type::list(Type::list(Type::Int))),
+        ("[[1.0 2.0] [3.0 4.0]]", Type::list(Type::list(Type::Float))),
+        (
+            "[[a]; [1] [2]]",
+            Type::Table(vec![("a".into(), Type::Int)].into()),
+        ),
+        (
+            "[[a]; [1.0] [2.0]]",
+            Type::Table(vec![("a".into(), Type::Float)].into()),
+        ),
+        (
+            "[[a]; [[1 2]] [[3 4]]]",
+            Type::Table(vec![("a".into(), Type::list(Type::Int))].into()),
+        ),
+        ("[1 2.0]", Type::list(Type::Number)),
+        ("[2.0 1]", Type::list(Type::Number)),
+        (
+            "[[a]; [1] [2.0]]",
+            Type::Table(vec![("a".into(), Type::Number)].into()),
+        ),
+        (
+            "[[a]; [2.0] [1] [hello]]",
+            Type::Table(vec![("a".into(), Type::Any)].into()),
+        ),
+    ] {
+        let engine = EngineState::new();
+        let mut working_set = StateWorkingSet::new(&engine);
+        let block = parse(&mut working_set, None, source.as_bytes(), false);
+        assert!(
+            working_set.parse_errors.is_empty(),
+            "{:?}",
+            working_set.parse_errors
+        );
+        assert_eq!(block.pipelines[0].elements[0].expr.ty, expected, "{source}");
+    }
+}

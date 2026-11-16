@@ -4588,9 +4588,7 @@ pub fn parse_list_expression(
                 };
 
                 if let Some(ref ctype) = contained_type {
-                    if *ctype != ty {
-                        contained_type = Some(Type::Any);
-                    }
+                    contained_type = Some(ctype.widen(&ty));
                 } else {
                     contained_type = Some(ty);
                 }
@@ -4770,13 +4768,7 @@ fn table_type(head: &[Expression], rows: &[Vec<Expression>]) -> (Type, Vec<Parse
     let mut mk_ty = || -> Type {
         rows.iter_mut()
             .map(|row| row.pop().map(|x| x.ty).unwrap_or_default())
-            .reduce(|acc, ty| -> Type {
-                if type_compatible(&acc, &ty) {
-                    ty
-                } else {
-                    Type::Any
-                }
-            })
+            .reduce(|acc, ty| -> Type { acc.widen(&ty) })
             .unwrap_or_default()
     };
 
@@ -4790,15 +4782,17 @@ fn table_type(head: &[Expression], rows: &[Vec<Expression>]) -> (Type, Vec<Parse
     let mut ty = head
         .iter()
         .rev()
-        .map(|expr| {
-            if let Some(str) = expr.as_string() {
-                str
+        .filter_map(|expr| {
+            let ty = mk_ty();
+            if let Some(title) = expr.as_string() {
+                Some((title, ty))
             } else {
-                errors.push(mk_error(expr.span));
-                String::from("{ column }")
+                if !type_compatible(&Type::String, &expr.ty) {
+                    errors.push(mk_error(expr.span));
+                }
+                None
             }
         })
-        .map(|title| (title, mk_ty()))
         .collect_vec();
 
     ty.reverse();

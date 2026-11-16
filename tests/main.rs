@@ -2,6 +2,7 @@ extern crate nu_test_support;
 
 mod const_;
 mod eval;
+mod foundation_a;
 mod foundation_c;
 mod hooks;
 mod modules;

@@ -1,5 +1,6 @@
 use super::{config_update_string_enum, prelude::*};
 use crate as nu_protocol;
+use std::{num::NonZeroU16, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, IntoValue, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TableMode {
@@ -338,6 +339,8 @@ impl UpdateFromValue for TableIndent {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableConfig {
+    pub batch_duration: Duration,
+    pub stream_page_size: NonZeroU16,
     pub mode: TableMode,
     pub index_mode: TableIndexMode,
     pub show_empty: bool,
@@ -357,6 +360,8 @@ impl IntoValue for TableConfig {
             .into_value(span);
 
         record! {
+            "batch_duration" => Value::duration(self.batch_duration.as_nanos() as i64, span),
+            "stream_page_size" => (self.stream_page_size.get() as i64).into_value(span),
             "mode" => self.mode.into_value(span),
             "index_mode" => self.index_mode.into_value(span),
             "show_empty" => self.show_empty.into_value(span),
@@ -374,6 +379,8 @@ impl IntoValue for TableConfig {
 impl Default for TableConfig {
     fn default() -> Self {
         Self {
+            batch_duration: Duration::from_secs(1),
+            stream_page_size: NonZeroU16::new(1000).unwrap(),
             mode: TableMode::Rounded,
             index_mode: TableIndexMode::Always,
             show_empty: true,
@@ -402,6 +409,25 @@ impl UpdateFromValue for TableConfig {
         for (col, val) in record.iter() {
             let path = &mut path.push(col);
             match col.as_str() {
+                "batch_duration" => match val {
+                    Value::Duration { val: duration, .. } if *duration >= 0 => {
+                        self.batch_duration = Duration::from_nanos(*duration as u64);
+                    }
+                    Value::Duration { .. } => {
+                        errors.invalid_value(path, "a non-negative duration", val)
+                    }
+                    _ => errors.type_mismatch(path, Type::Duration, val),
+                },
+                "stream_page_size" => match val {
+                    Value::Int { val: count, .. } if *count > 0 => {
+                        match u16::try_from(*count).ok().and_then(NonZeroU16::new) {
+                            Some(count) => self.stream_page_size = count,
+                            None => errors.invalid_value(path, "an integer from 1 to 65535", val),
+                        }
+                    }
+                    Value::Int { .. } => errors.invalid_value(path, "a positive integer", val),
+                    _ => errors.type_mismatch(path, Type::Int, val),
+                },
                 "mode" => self.mode.update(val, path, errors),
                 "index_mode" => self.index_mode.update(val, path, errors),
                 "show_empty" => self.show_empty.update(val, path, errors),

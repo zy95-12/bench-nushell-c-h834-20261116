@@ -89,7 +89,7 @@ impl Command for StorInsert {
         let records = handle(span, data_record, input)?;
 
         for record in records {
-            process(table_name.clone(), span, &db, record)?;
+            process(engine_state, table_name.clone(), span, &db, record)?;
         }
 
         Ok(Value::custom(db, span).into_pipeline_data())
@@ -151,6 +151,7 @@ fn handle(
 }
 
 fn process(
+    engine_state: &EngineState,
     table_name: Option<String>,
     span: Span,
     db: &SQLiteDatabase,
@@ -186,7 +187,18 @@ fn process(
     // dbg!(&create_stmt);
 
     // Get the params from the passed values
-    let params = values_to_sql(record.values().cloned())?;
+    let values = record
+        .values()
+        .map(|value| {
+            if matches!(value, Value::Record { .. } | Value::List { .. }) {
+                let json = crate::formats::value_to_json_value(engine_state, value, span, false)?;
+                Ok(Value::string(json.to_string(), value.span()))
+            } else {
+                Ok(value.clone())
+            }
+        })
+        .collect::<Result<Vec<_>, ShellError>>()?;
+    let params = values_to_sql(values)?;
 
     if let Ok(conn) = db.open_connection() {
         conn.execute(&create_stmt, params_from_iter(params))
@@ -253,7 +265,7 @@ mod test {
             ),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
 
         assert!(result.is_ok());
     }
@@ -281,7 +293,7 @@ mod test {
             Value::test_string("String With Spaces".to_string()),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
 
         assert!(result.is_ok());
     }
@@ -309,7 +321,7 @@ mod test {
             Value::test_string("ThisIsALongString".to_string()),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
         // SQLite uses dynamic typing, making any length acceptable for a varchar column
         assert!(result.is_ok());
     }
@@ -337,7 +349,7 @@ mod test {
             Value::test_string("ThisIsTheWrongType".to_string()),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
         // SQLite uses dynamic typing, making any type acceptable for a column
         assert!(result.is_ok());
     }
@@ -365,7 +377,7 @@ mod test {
             Value::test_string("ThisIsALongString".to_string()),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
 
         assert!(result.is_err());
     }
@@ -385,7 +397,7 @@ mod test {
             Value::test_string("ThisIsALongString".to_string()),
         );
 
-        let result = process(table_name, span, &db, columns);
+        let result = process(&EngineState::new(), table_name, span, &db, columns);
 
         assert!(result.is_err());
     }
